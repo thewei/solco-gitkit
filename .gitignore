@@ -1,0 +1,5 @@
+.DS_Store
+
+# Machine-local workspace files; never committed (see README.md "Working next to Solco").
+go.work
+go.work.sum

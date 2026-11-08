@@ -1,0 +1,161 @@
+// flavor.go decides how a file previews (FILES-07/08, reworked 2026-10-14):
+// the WebView page renders what HTML suits — Markdown up to PreviewCap and
+// images up to ImagePreviewCap as data URLs — while text, code and
+// Markdown source show in the native code view (ReadText) and oversized
+// images decode to a native bitmap. SVG stays text when it outgrows the
+// image cap — it is XML source a developer can read.
+
+package filesview
+
+import (
+	"bytes"
+	"encoding/base64"
+	"errors"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// Flavor names the three render paths a preview can take.
+type Flavor string
+
+const (
+	FlavorText     Flavor = "text"
+	FlavorMarkdown Flavor = "markdown"
+	FlavorImage    Flavor = "image"
+)
+
+// ImagePreviewCap is the largest image the WebView tier takes as a data
+// URL (24 MiB; text keeps the 1 MiB PreviewCap). Beyond it the Native UI
+// tier renders.
+const ImagePreviewCap = 24 << 20
+
+// markdownExts render (default) instead of highlighting.
+var markdownExts = map[string]struct{}{
+	".md":       {},
+	".markdown": {},
+}
+
+// imageExts are the formats WKWebView's <img> renders from a data URL.
+var imageExts = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+	".svg":  "image/svg+xml",
+	".ico":  "image/x-icon",
+	".avif": "image/avif",
+}
+
+// PreviewFlavor maps a filename to its preview flavor. Everything that is
+// neither Markdown nor an image previews as text (the code view highlights
+// by extension; unknown extensions render plain).
+func PreviewFlavor(name string) Flavor {
+	ext := strings.ToLower(filepath.Ext(name))
+	if _, ok := markdownExts[ext]; ok {
+		return FlavorMarkdown
+	}
+	if _, ok := imageExts[ext]; ok {
+		return FlavorImage
+	}
+	return FlavorText
+}
+
+// ImageMIME returns the data-URL media type for an image filename.
+func ImageMIME(name string) string {
+	return imageExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// ErrTooLarge reports a file beyond its flavor's WebView cap; the caller
+// falls back to the Native UI tier.
+var ErrTooLarge = errors.New("file is too large for the web preview")
+
+// ReadImageDataURL reads an image up to ImagePreviewCap and returns it as
+// a data URL for the WebView tier's <img>.
+func ReadImageDataURL(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Size() > ImagePreviewCap {
+		return "", ErrTooLarge
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	mime := ImageMIME(path)
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	if mime == "image/svg+xml" {
+		raw = withSVGNamespace(raw)
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), nil
+}
+
+var svgOpenTag = regexp.MustCompile(`(?i)<svg([\s>/])`)
+
+// withSVGNamespace adds the SVG namespace to a root <svg> that lacks one: an
+// <img> refuses to draw a standalone SVG without it (hand-written and
+// generated files often omit it), while the file itself stays untouched.
+func withSVGNamespace(raw []byte) []byte {
+	loc := svgOpenTag.FindSubmatchIndex(raw)
+	if loc == nil {
+		return raw
+	}
+	end := bytes.IndexByte(raw[loc[0]:], '>')
+	if end < 0 || bytes.Contains(raw[loc[0]:loc[0]+end], []byte("xmlns=")) {
+		return raw
+	}
+	at := loc[0] + len("<svg")
+	out := make([]byte, 0, len(raw)+40)
+	out = append(out, raw[:at]...)
+	out = append(out, []byte(` xmlns="http://www.w3.org/2000/svg"`)...)
+	return append(out, raw[at:]...)
+}
+
+// MaxNativeImagePixels bounds the Native tier's decoded bitmap: 32M pixels
+// (a 128 MiB RGBA buffer). DecodeConfig rejects insanity before the full
+// decode allocates.
+const MaxNativeImagePixels = 32 << 20
+
+// ErrDimensionsTooLarge reports an image whose decoded size exceeds the
+// Native tier's pixel budget.
+var ErrDimensionsTooLarge = errors.New("image dimensions exceed the preview budget")
+
+// DecodeImageBounded decodes an image for the Native UI tier (the WebView
+// tier already refused it as too large): the pixel budget is checked via
+// DecodeConfig before the full decode allocates. Runs off the UI lane; the
+// caller wraps the result in ui.NewBitmap on the UI lane.
+func DecodeImageBounded(path string) (image.Image, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return DecodeImageBytes(raw)
+}
+
+// DecodeImageBytes is DecodeImageBounded for bytes already in hand (a Git
+// blob): the same pixel budget, checked before the full decode allocates.
+func DecodeImageBytes(raw []byte) (image.Image, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > MaxNativeImagePixels {
+		return nil, ErrDimensionsTooLarge
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	return img, nil
+}

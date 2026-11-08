@@ -1,0 +1,39 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    strategy:
+      matrix:
+        os: [macos-15, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Only the standard library
+        run: |
+          if go list -deps ./... | grep -E '^[^/]+\.[^/]+/' | grep -v '^github.com/thewei/solco-gitkit/'; then
+            echo "a dependency outside the standard library crept in"
+            exit 1
+          fi
