@@ -65,6 +65,13 @@ func NewError(class ErrClass, op OpClass, sub string, exitCode int, stderr strin
 // Git's words in hand classes the failure the same way.
 func ClassifyStderr(stderr string) ErrClass { return classifyErr(stderr) }
 
+// StashBackend implements StashList: the entries newest first, each with its
+// base commit (the first parent of the stash commit), as the argv path
+// returns them.
+type StashBackend interface {
+	StashList(ctx context.Context, root string) ([]Stash, error)
+}
+
 // HistoryBackend implements RewriteHistory's rewrite step on one run of
 // commits of the checked-out branch. Runner.RewriteHistory has already
 // validated the operation, required a clean tree and an attached branch and

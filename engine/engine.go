@@ -61,6 +61,9 @@ type session struct {
 	// mainWorktree is the main work tree of the repository the session's
 	// root belongs to (root itself unless it is a linked work tree).
 	mainWorktree string
+	// cmd runs the few reads LazyGit has no command for: pinned to this
+	// work tree like LazyGit's own commands, under the same policy.
+	cmd oscommands.ICmdObjBuilder
 	// tempDir is where LazyGit writes the patch files it applies; emptied
 	// after every operation so no diff of the user's code outlives it.
 	tempDir string
@@ -126,5 +129,5 @@ func newSession(root string) (_ *session, err error) {
 	gitConfig.SetDir(paths.WorktreePath())
 	diffConfig := config.NewDiffRendererConfigManager(cmn.UserConfig)
 	g := commands.NewGitCommandAux(cmn, version, osCommand, gitConfig, paths, diffConfig)
-	return &session{git: g, main: git_commands.NewMainBranches(cmn, osCommand.Cmd), mainWorktree: paths.RepoPath(), tempDir: tempDir}, nil
+	return &session{git: g, main: git_commands.NewMainBranches(cmn, osCommand.Cmd), mainWorktree: paths.RepoPath(), cmd: commands.NewGitCmdObjBuilder(cmn.Log, osCommand.Cmd, paths.WorktreePath(), paths.GitLocationEnvVars()), tempDir: tempDir}, nil
 }

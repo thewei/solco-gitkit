@@ -194,11 +194,6 @@ func TestUnmigratedGroupsStayOnArgv(t *testing.T) {
 		t.Fatal("ListRemotes must stay on the argv path (see TestRemotesDoNotReachParity)")
 	}
 	if _, ok := e.(interface {
-		StashList(context.Context, string) ([]gitworkbench.Stash, error)
-	}); ok {
-		t.Fatal("StashList must stay on the argv path: LazyGit's entry has no base commit")
-	}
-	if _, ok := e.(interface {
 		ListSubmodules(context.Context, string) ([]gitworkbench.Submodule, error)
 	}); ok {
 		t.Fatal("ListSubmodules must stay on the argv path: LazyGit reads .gitmodules, not `submodule status`")

@@ -117,6 +117,9 @@ func (r *Runner) StashPush(ctx context.Context, root, message string) error {
 
 // StashList enumerates the stash entries, newest first.
 func (r *Runner) StashList(ctx context.Context, root string) ([]Stash, error) {
+	if b, ok := r.Backend.(StashBackend); ok {
+		return b.StashList(ctx, root)
+	}
 	out, err := r.Read(ctx, root, "stash", "list", "--format=%gd\t%H\t%P\t%gs")
 	if err != nil {
 		return nil, err

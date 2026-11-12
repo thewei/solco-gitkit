@@ -47,6 +47,7 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `repository.go`：Git 仓库元数据读取。
 - `runner.go`：带超时、错误分类与单仓库串行的 Git 命令边界。
 - `history_rewrite.go`：`RewriteHistory`（reword / squash / fixup / drop / move 一段相邻提交；需要 `HistoryBackend`，没有就拒绝；先要求干净工作区与已附着分支，失败即中止变基）。与 `InteractiveRebase`（整份 todo、argv 实现）并存；`guardedRewrite` 是它与自定义补丁共用的“加锁 → 失败则中止变基并报冲突”外壳。
+- `backend.go` 里还有 `StashBackend`（`StashList`，与 argv 路径逐项一致）。
 - `write_backend.go`：`WriteBackend`（分支切换/创建/改名/删除、stash 推入/弹出/应用/丢弃、标签创建/删除）与 `viaWriter`：校验与参数形态留在 Runner，只把「执行那条 git 命令」交给后端；没有后端或该情形不适用时照旧 `Mutate`。
 - `amend_pick.go`：`AmendTo`（`AmendBackend`；只允许暂存改动，失败后连 fixup 提交一起回收、改动仍在暂存区，无 argv 回退）与 `CherryPickCommits`（`CherryPickBackend`，无后端时回落 `git cherry-pick --allow-empty`；校验在先、拒绝合并提交、冲突留给序列器继续/中止）。
 - `custom_patch.go`：`PatchSource` / `RewriteWithPatch`（`PatchBackend`；从提交移除 / 拆分 / 移动 / 撤回所选文件或行，校验在先、需干净工作区与已附着分支、冲突即中止，没有后端就拒绝，无 argv 回退）。
