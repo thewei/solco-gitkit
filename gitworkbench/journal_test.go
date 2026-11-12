@@ -368,3 +368,99 @@ func TestJournalWorksInALinkedWorktree(t *testing.T) {
 		t.Error("recovery in a linked worktree failed")
 	}
 }
+
+func TestDeleteBranchKeepsTheTipAndUndoRecreatesIt(t *testing.T) {
+	root, r := journalRepo(t)
+	ctx := context.Background()
+	runGit(t, root, "branch", "feat")
+	tip := undoHead(t, root)
+
+	if err := r.DeleteBranch(ctx, root, "feat"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "branch", "--list", "feat")); got != "" {
+		t.Fatalf("the branch is still there: %q", got)
+	}
+	op := onlyOperation(t, r, root)
+	if op.Kind != OpKindBranchDelete || op.Name != "feat" || op.Snapshot != tip || !op.CanUndo() {
+		t.Fatalf("record = %+v", op)
+	}
+
+	// A branch of the same name made since is never overwritten.
+	runGit(t, root, "branch", "feat", "HEAD")
+	err := r.UndoOperation(ctx, root, op.ID)
+	if ge, ok := GitError(err); !ok || ge.Class != ErrStaleState {
+		t.Fatalf("err = %v, want a stale-state refusal", err)
+	}
+	runGit(t, root, "branch", "-D", "feat")
+
+	if err := r.UndoOperation(ctx, root, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "rev-parse", "refs/heads/feat")); got != tip {
+		t.Errorf("feat = %s, want %s", got, tip)
+	}
+	if err := r.UndoOperation(ctx, root, op.ID); err == nil {
+		t.Error("recovering twice must be refused")
+	}
+}
+
+func TestRefusedBranchDeleteLeavesNoRecord(t *testing.T) {
+	root, r := journalRepo(t)
+	runGit(t, root, "switch", "-q", "-c", "unmerged")
+	undoCommit(t, root, "u.txt", "u\n", "only here")
+	runGit(t, root, "switch", "-q", "-")
+	if err := r.DeleteBranch(context.Background(), root, "unmerged"); err == nil {
+		t.Fatal("git -d deleted an unmerged branch")
+	}
+	if ops := mustOps(t, r, root); len(ops) != 0 {
+		t.Errorf("a delete that destroyed nothing left records: %+v", ops)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "for-each-ref", "refs/solcogit")); got != "" {
+		t.Errorf("its pin survived: %q", got)
+	}
+}
+
+func TestStashDropKeepsTheStashAndUndoStoresItAgain(t *testing.T) {
+	root, r := journalRepo(t)
+	ctx := context.Background()
+	writeRepoFile(t, root, "base.txt", "stashed edit\n")
+	writeRepoFile(t, root, "loose.txt", "untracked in the stash\n")
+	runGit(t, root, "stash", "push", "-q", "-u", "-m", "my stash")
+	hash := strings.TrimSpace(runGit(t, root, "rev-parse", "stash@{0}"))
+
+	if err := r.StashDrop(ctx, root, "stash@{0}"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "stash", "list")); got != "" {
+		t.Fatalf("the stash is still listed: %q", got)
+	}
+	op := onlyOperation(t, r, root)
+	if op.Kind != OpKindStashDrop || op.Snapshot != hash || !strings.Contains(op.Name, "my stash") {
+		t.Fatalf("record = %+v", op)
+	}
+
+	if err := r.UndoOperation(ctx, root, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "rev-parse", "stash@{0}")); got != hash {
+		t.Errorf("stash@{0} = %s, want %s", got, hash)
+	}
+	if got := runGit(t, root, "stash", "list"); !strings.Contains(got, "my stash") {
+		t.Errorf("stash list = %q", got)
+	}
+	runGit(t, root, "stash", "pop", "-q")
+	if readRepoFile(t, root, "base.txt") != "stashed edit\n" || readRepoFile(t, root, "loose.txt") != "untracked in the stash\n" {
+		t.Error("the recovered stash lost content (tracked or untracked part)")
+	}
+}
+
+func TestStashDropOfAMissingStashLeavesNoRecord(t *testing.T) {
+	root, r := journalRepo(t)
+	if err := r.StashDrop(context.Background(), root, "stash@{3}"); err == nil {
+		t.Fatal("dropped a stash that does not exist")
+	}
+	if ops := mustOps(t, r, root); len(ops) != 0 {
+		t.Errorf("records = %+v", ops)
+	}
+}

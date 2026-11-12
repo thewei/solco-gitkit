@@ -197,6 +197,26 @@ func (r *Runner) StashDrop(ctx context.Context, root, ref string) error {
 		return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "stash",
 			err: fmt.Errorf("invalid stash ref %q", ref)}
 	}
+	if r.Journal {
+		var message string
+		return r.journaledWork(ctx, root, Operation{Kind: OpKindStashDrop},
+			func() (string, error) {
+				hash, err := r.Read(ctx, root, "rev-parse", "--verify", ref+"^{commit}")
+				if err != nil {
+					return "", err
+				}
+				subject, err := r.Read(ctx, root, "log", "-1", "--format=%s", strings.TrimSpace(string(hash)))
+				message = strings.TrimSpace(string(subject))
+				return strings.TrimSpace(string(hash)), err
+			},
+			func() error {
+				if w, ok := r.Backend.(WriteBackend); ok {
+					return w.StashDrop(ctx, root, stashIndex(ref))
+				}
+				_, err := r.runMutating(ctx, root, mutateEnv(), "stash", "drop", ref)
+				return err
+			}, func(op *Operation) { op.Name = message })
+	}
 	if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashDrop(ctx, root, stashIndex(ref)) }); handled {
 		return err
 	}
@@ -345,6 +365,20 @@ func (r *Runner) network(ctx context.Context, root string, args ...string) ([]by
 func (r *Runner) DeleteBranch(ctx context.Context, root, name string) error {
 	if err := r.validateLocalBranch(ctx, root, name); err != nil {
 		return err
+	}
+	if r.Journal {
+		return r.journaledWork(ctx, root, Operation{Kind: OpKindBranchDelete, Name: name},
+			func() (string, error) {
+				tip, err := r.Read(ctx, root, "rev-parse", "--verify", "refs/heads/"+name)
+				return strings.TrimSpace(string(tip)), err
+			},
+			func() error {
+				if w, ok := r.Backend.(WriteBackend); ok {
+					return w.DeleteBranch(ctx, root, name)
+				}
+				_, err := r.runMutating(ctx, root, mutateEnv(), "branch", "-d", name)
+				return err
+			}, nil)
 	}
 	if handled, err := r.viaWriter(root, "branch", func(w WriteBackend) error { return w.DeleteBranch(ctx, root, name) }); handled {
 		return err

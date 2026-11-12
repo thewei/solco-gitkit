@@ -285,6 +285,10 @@ func (r *Runner) UndoOperation(ctx context.Context, root, id string) error {
 	switch op.Kind {
 	case OpKindDiscard, OpKindDeleteUntracked:
 		err = r.undoWork(ctx, root, op)
+	case OpKindBranchDelete:
+		err = r.undoBranchDelete(ctx, root, op)
+	case OpKindStashDrop:
+		err = r.undoStashDrop(ctx, root, op)
 	default:
 		err = refusal("recover", "this kind of entry cannot be recovered yet")
 	}
@@ -292,4 +296,29 @@ func (r *Runner) UndoOperation(ctx context.Context, root, id string) error {
 		return err
 	}
 	return r.markUndone(ctx, root, op)
+}
+
+// undoBranchDelete makes the branch again at the tip it had. A branch of that
+// name that exists now is never touched. Its upstream setting is not restored:
+// Git removed it with the branch and the record does not keep it.
+func (r *Runner) undoBranchDelete(ctx context.Context, root string, op Operation) error {
+	if err := r.verifySnapshot(ctx, root, op); err != nil {
+		return err
+	}
+	if _, err := r.Read(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+op.Name); err == nil {
+		return &Error{Class: ErrStaleState, OpClass: OpMutate, Op: "recover",
+			err: fmt.Errorf("a branch named %s exists again", op.Name)}
+	}
+	_, err := r.runMutating(ctx, root, mutateEnv(), "update-ref", "-m", "solco-git: recover branch "+op.Name,
+		"refs/heads/"+op.Name, op.Snapshot, strings.Repeat("0", len(op.Snapshot)))
+	return err
+}
+
+// undoStashDrop puts the dropped stash back on top of the stash list.
+func (r *Runner) undoStashDrop(ctx context.Context, root string, op Operation) error {
+	if err := r.verifySnapshot(ctx, root, op); err != nil {
+		return err
+	}
+	_, err := r.runMutating(ctx, root, mutateEnv(), "stash", "store", "-m", op.Name, op.Snapshot)
+	return err
 }
