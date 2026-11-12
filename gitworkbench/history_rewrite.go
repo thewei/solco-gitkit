@@ -55,18 +55,24 @@ func (r *Runner) RewriteHistory(ctx context.Context, root string, op HistoryOp) 
 		return err
 	}
 
+	return r.guardedRewrite(ctx, root, func() error { return hb.RewriteHistory(ctx, root, op) })
+}
+
+// guardedRewrite runs a backend rewrite under the repository's lock and, when
+// it fails for whatever reason, rolls a rebase left behind back: nothing
+// changes, and a conflict is reported as ErrConflict with the files that
+// clashed. The caller has already validated and required a clean tree.
+func (r *Runner) guardedRewrite(ctx context.Context, root string, rewrite func() error) error {
 	unlock, err := r.LockRepo(root, "rebase")
 	if err != nil {
 		return err
 	}
-	err = hb.RewriteHistory(ctx, root, op)
+	err = rewrite()
 	unlock()
 	if err == nil {
 		return nil
 	}
 
-	// Whatever stopped it, a rebase left behind is rolled back, as
-	// InteractiveRebase and RebaseOnto do.
 	state, _ := r.SequencerState(ctx, root)
 	if state.Active() {
 		_, _ = r.Mutate(ctx, root, "rebase", "--abort")

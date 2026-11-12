@@ -16,6 +16,7 @@ package engine
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/jesseduffield/lazygit/pkg/commands"
@@ -39,6 +40,17 @@ func New() *Engine { return &Engine{sessions: map[string]*session{}} }
 
 var _ gitworkbench.Backend = (*Engine)(nil)
 
+// Close removes the sessions' temporary directories. The Engine stays usable:
+// the next call makes a new session.
+func (e *Engine) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for root, s := range e.sessions {
+		_ = os.RemoveAll(s.tempDir)
+		delete(e.sessions, root)
+	}
+}
+
 // Name implements gitworkbench.Backend.
 func (*Engine) Name() string { return "lazygit" }
 
@@ -49,7 +61,20 @@ type session struct {
 	// mainWorktree is the main work tree of the repository the session's
 	// root belongs to (root itself unless it is a linked work tree).
 	mainWorktree string
+	// tempDir is where LazyGit writes the patch files it applies; emptied
+	// after every operation so no diff of the user's code outlives it.
+	tempDir string
 }
+
+// tempConfig gives LazyGit's command layer a private temporary directory: the
+// dummy configuration has none, which makes patch files land in the working
+// directory of the process.
+type tempConfig struct {
+	*config.AppConfig
+	dir string
+}
+
+func (c tempConfig) GetTempDir() string { return c.dir }
 
 func (e *Engine) session(root string) (*session, error) {
 	e.mu.Lock()
@@ -69,9 +94,18 @@ func (e *Engine) session(root string) (*session, error) {
 // working directory (the library's own constructor changes it, and several
 // repositories are open at once): every command is pinned to root by the
 // builder the layer is given.
-func newSession(root string) (*session, error) {
+func newSession(root string) (_ *session, err error) {
 	cmn := common.NewDummyCommon()
-	appConfig := config.NewDummyAppConfig()
+	tempDir, err := os.MkdirTemp("", "solco-engine-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	appConfig := tempConfig{AppConfig: config.NewDummyAppConfig(), dir: tempDir}
 	osCommand := oscommands.NewOSCommand(cmn, appConfig, oscommands.GetPlatform(),
 		oscommands.NewNullGuiIO(cmn.Log))
 	osCommand.Cmd = osCommand.Cmd.CloneWithNewRunner(func(oscommands.ICmdObjRunner) oscommands.ICmdObjRunner {
@@ -92,5 +126,5 @@ func newSession(root string) (*session, error) {
 	gitConfig.SetDir(paths.WorktreePath())
 	diffConfig := config.NewDiffRendererConfigManager(cmn.UserConfig)
 	g := commands.NewGitCommandAux(cmn, version, osCommand, gitConfig, paths, diffConfig)
-	return &session{git: g, main: git_commands.NewMainBranches(cmn, osCommand.Cmd), mainWorktree: paths.RepoPath()}, nil
+	return &session{git: g, main: git_commands.NewMainBranches(cmn, osCommand.Cmd), mainWorktree: paths.RepoPath(), tempDir: tempDir}, nil
 }

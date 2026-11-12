@@ -10,6 +10,7 @@ solco-gitkit 里的嵌套 Go 模块（`github.com/thewei/solco-gitkit/engine`，
 - `lists.go`：`ListTags`、`ListWorktrees`（对拍通过的读取组；`lists_test.go` 还含 remotes 为何不迁的证据测试）。
 - `history.go`：`RewriteHistory`——批量历史改写（reword / squash / fixup / drop / move，一段相邻提交）走 LazyGit 的 `Rebase` 命令组：载入 HEAD 的最近 1000 个提交，定位选中的连续区间，拒绝合并提交与过远的提交，其余交给 `RebaseCommands`；停下的变基由 `Runner.RewriteHistory` 负责中止（冲突报 `ErrConflict`）。
 - `daemon.go`：`RunDaemon`——LazyGit 的变基命令把正在运行的可执行文件设成 git 的编辑器（环境里带 `LAZYGIT_DAEMON_*`），宿主在 main / TestMain 的第一行调它：被 git 拉起时改写 todo 后退出，否则什么都不做。
+- `patch.go`：自定义补丁——`PatchSource`（读一个提交里某文件的 diff，标出可选的 `+`/`-` 行，行号即 LazyGit `PatchBuilder` 的行索引）与 `RewriteWithPatch`（从提交移除 / 拆成新提交 / 移到另一个提交 / 撤回到工作区；按整文件或行区间）。`PatchBuilder` 是有状态单例，每次操作前后 `Reset`；补丁临时文件写进每个 session 私有的临时目录（`tempConfig`，LazyGit 的默认 dummy 配置会把它们落在进程当前目录），操作后清空，`Engine.Close` 删目录。`patch_test.go`：五种动作的真实仓库结果、冲突即中止、各种拒绝、无残留（含变异检查：去掉清理或临时目录配置会失败）。
 - `history_test.go` / `main_test.go`：对拍——同一批操作在引擎路径和 argv 的 `InteractiveRebase` 上得到相同的消息与树；冲突即中止且仓库逐字节如初；用户的编辑器环境变量不得拉起编辑器；各种拒绝（不相邻、未知提交、合并、脏工作区、无后端）不改仓库；`TestMain` 调 `RunDaemon`（git 把测试二进制当编辑器）。
 - `engine_test.go`：对拍——同一批真实仓库（未出生 HEAD、多分支、跟踪远端、upstream 已删、游离 HEAD）上 argv 路径与引擎路径结果必须一致（未出生分支的差异就是它抓到的）；策略合同——环境变量压过父进程、超时杀进程、输出上限、失败带类别与操作类、子命令解析；每条做过变异检查。
 

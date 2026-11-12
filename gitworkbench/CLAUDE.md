@@ -46,7 +46,8 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `patch.go`：Diff/hunk 补丁构建和应用。
 - `repository.go`：Git 仓库元数据读取。
 - `runner.go`：带超时、错误分类与单仓库串行的 Git 命令边界。
-- `history_rewrite.go`：`RewriteHistory`（reword / squash / fixup / drop / move 一段相邻提交；需要 `HistoryBackend`，没有就拒绝；先要求干净工作区与已附着分支，失败即中止变基）。与 `InteractiveRebase`（整份 todo、argv 实现）并存。
+- `history_rewrite.go`：`RewriteHistory`（reword / squash / fixup / drop / move 一段相邻提交；需要 `HistoryBackend`，没有就拒绝；先要求干净工作区与已附着分支，失败即中止变基）。与 `InteractiveRebase`（整份 todo、argv 实现）并存；`guardedRewrite` 是它与自定义补丁共用的“加锁 → 失败则中止变基并报冲突”外壳。
+- `custom_patch.go`：`PatchSource` / `RewriteWithPatch`（`PatchBackend`；从提交移除 / 拆分 / 移动 / 撤回所选文件或行，校验在先、需干净工作区与已附着分支、冲突即中止，没有后端就拒绝，无 argv 回退）。
 - `sequencer.go`：merge/revert/cherry-pick 状态探测和完成/中止；`RebaseOnto`（冲突即 abort 并回报冲突文件）。
 - `sequencer_test.go`：sequencer 事务状态测试。
 - `tree.go`：变更文件的目录树、折叠与过滤模型。

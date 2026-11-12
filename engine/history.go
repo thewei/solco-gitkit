@@ -41,9 +41,7 @@ func (e *Engine) RewriteHistory(ctx context.Context, root string, op gitworkbenc
 	if err != nil {
 		return err
 	}
-	commits, err := s.git.Loaders.CommitLoader.GetCommits(git_commands.GetCommitsOptions{
-		Limit: historyWindow, RefName: "HEAD", MainBranches: s.main, HashPool: &utils.StringPool{},
-	})
+	commits, truncated, err := s.loadCommits()
 	if err != nil {
 		return err
 	}
@@ -51,7 +49,6 @@ func (e *Engine) RewriteHistory(ctx context.Context, root string, op gitworkbenc
 	if err != nil {
 		return err
 	}
-	truncated := len(commits) >= historyWindow
 	// The commits from the newest to the one the rebase starts after must be
 	// linear: the rebase replays them, and a merge among them would be
 	// recreated rather than kept.
@@ -65,10 +62,8 @@ func (e *Engine) RewriteHistory(ctx context.Context, root string, op gitworkbenc
 	if truncated && reach >= len(commits) {
 		return historyRefusal("those commits are too far down the branch for one rewrite; choose newer ones")
 	}
-	for i := 0; i < min(reach, len(commits)); i++ {
-		if commits[i].IsMerge() {
-			return historyRefusal("the range contains a merge commit (%s); history rewriting only handles linear history", shortHash(commits[i].Hash()))
-		}
+	if err := refuseMerges(commits, reach); err != nil {
+		return err
 	}
 
 	rebase := s.git.Rebase
@@ -126,4 +121,24 @@ func locateRun(commits []*models.Commit, hashes []string) (start, end int, err e
 		return 0, 0, historyRefusal("the chosen commits must sit next to each other")
 	}
 	return start, end, nil
+}
+
+// loadCommits reads the latest commits of the checked-out branch, newest
+// first, and says whether the branch is longer than the window.
+func (s *session) loadCommits() (commits []*models.Commit, truncated bool, err error) {
+	commits, err = s.git.Loaders.CommitLoader.GetCommits(git_commands.GetCommitsOptions{
+		Limit: historyWindow, RefName: "HEAD", MainBranches: s.main, HashPool: &utils.StringPool{},
+	})
+	return commits, len(commits) >= historyWindow, err
+}
+
+// refuseMerges refuses a rewrite when one of the first reach commits is a
+// merge: the rebase replays them, and a merge would be recreated, not kept.
+func refuseMerges(commits []*models.Commit, reach int) error {
+	for i := 0; i < min(reach, len(commits)); i++ {
+		if commits[i].IsMerge() {
+			return historyRefusal("the range contains a merge commit (%s); history rewriting only handles linear history", shortHash(commits[i].Hash()))
+		}
+	}
+	return nil
 }
