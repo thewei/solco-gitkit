@@ -301,6 +301,8 @@ func (r *Runner) UndoOperation(ctx context.Context, root, id string) error {
 		err = r.undoApplyPatch(ctx, root, op)
 	case OpKindStashClear:
 		err = r.undoStashClear(ctx, root, op)
+	case OpKindResolveConflict:
+		err = r.undoResolve(ctx, root, op)
 	default:
 		err = refusal("recover", "this kind of entry cannot be recovered yet")
 	}

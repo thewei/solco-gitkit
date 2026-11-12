@@ -92,6 +92,7 @@ type Error struct {
 	Stderr   string   // truncated; UI display only, never logged by this package
 	Paths    []string // conflicting files of a stopped merge/rebase; UI display only
 	err      error
+	out      []byte // stdout of a failed command, for the few that report through the exit code (merge-file)
 }
 
 func (e *Error) Error() string {
@@ -322,6 +323,7 @@ func (r *Runner) run(ctx context.Context, class OpClass, timeout time.Duration, 
 			ExitCode: exitCode(err),
 			Stderr:   truncate(stderrBuf.String(), 8000),
 			err:      err,
+			out:      stdout.Bytes(),
 		}
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):

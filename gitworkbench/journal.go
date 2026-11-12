@@ -33,6 +33,7 @@ const (
 	OpKindStashDrop       = "stash-drop"
 	OpKindStashClear      = "stash-clear"
 	OpKindApplyPatch      = "apply-patch"
+	OpKindResolveConflict = "resolve-conflict"
 
 	OpStatusPending     = "pending"
 	OpStatusSucceeded   = "succeeded"
