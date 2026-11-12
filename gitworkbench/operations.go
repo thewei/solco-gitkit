@@ -100,6 +100,13 @@ type Stash struct {
 // StashPush stashes the worktree and index; untracked files join with -u so
 // "stash" puts the whole change set away, as the Changes list shows it.
 func (r *Runner) StashPush(ctx context.Context, root, message string) error {
+	// The engine's stash always carries a message; without one, Git's own
+	// "WIP on <branch>" text is what the argv path keeps.
+	if message != "" {
+		if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashPush(ctx, root, message) }); handled {
+			return err
+		}
+	}
 	args := []string{"stash", "push", "-u"}
 	if message != "" {
 		args = append(args, "-m", message)
@@ -137,6 +144,9 @@ func (r *Runner) StashPop(ctx context.Context, root, ref string) error {
 		return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "stash",
 			err: fmt.Errorf("invalid stash ref %q", ref)}
 	}
+	if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashPop(ctx, root, stashIndex(ref)) }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "stash", "pop", ref)
 	return err
 }
@@ -147,6 +157,9 @@ func (r *Runner) StashApply(ctx context.Context, root, ref string) error {
 		return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "stash",
 			err: fmt.Errorf("invalid stash ref %q", ref)}
 	}
+	if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashApply(ctx, root, stashIndex(ref)) }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "stash", "apply", ref)
 	return err
 }
@@ -156,6 +169,9 @@ func (r *Runner) StashDrop(ctx context.Context, root, ref string) error {
 	if !validStashRef(ref) {
 		return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "stash",
 			err: fmt.Errorf("invalid stash ref %q", ref)}
+	}
+	if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashDrop(ctx, root, stashIndex(ref)) }); handled {
+		return err
 	}
 	_, err := r.Mutate(ctx, root, "stash", "drop", ref)
 	return err
@@ -303,6 +319,9 @@ func (r *Runner) DeleteBranch(ctx context.Context, root, name string) error {
 	if err := r.validateLocalBranch(ctx, root, name); err != nil {
 		return err
 	}
+	if handled, err := r.viaWriter(root, "branch", func(w WriteBackend) error { return w.DeleteBranch(ctx, root, name) }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "branch", "-d", name)
 	return err
 }
@@ -363,6 +382,9 @@ func (r *Runner) CreateTag(ctx context.Context, root, name string) error {
 	if _, err := r.Read(ctx, root, "check-ref-format", "--allow-onelevel", name); err != nil {
 		return fmt.Errorf("invalid tag name %q", name)
 	}
+	if handled, err := r.viaWriter(root, "tag", func(w WriteBackend) error { return w.CreateTag(ctx, root, name, "") }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "tag", name)
 	return err
 }
@@ -374,6 +396,9 @@ func (r *Runner) CreateTagAt(ctx context.Context, root, name, hash string) error
 	}
 	if _, err := r.Read(ctx, root, "check-ref-format", "--allow-onelevel", name); err != nil || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("invalid tag name %q", name)
+	}
+	if handled, err := r.viaWriter(root, "tag", func(w WriteBackend) error { return w.CreateTag(ctx, root, name, hash) }); handled {
+		return err
 	}
 	_, err := r.Mutate(ctx, root, "tag", name, hash)
 	return err
@@ -390,6 +415,9 @@ func (r *Runner) PushTag(ctx context.Context, root, remote, name string) error {
 
 // DeleteTag removes one tag.
 func (r *Runner) DeleteTag(ctx context.Context, root, name string) error {
+	if handled, err := r.viaWriter(root, "tag", func(w WriteBackend) error { return w.DeleteTag(ctx, root, name) }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "tag", "-d", name)
 	return err
 }

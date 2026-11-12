@@ -107,6 +107,12 @@ func (r *Runner) SwitchBranch(ctx context.Context, root, name string) (SwitchRes
 	if err := r.validateLocalBranch(ctx, root, name); err != nil {
 		return SwitchResult{}, err
 	}
+	if handled, err := r.viaWriter(root, "switch", func(w WriteBackend) error { return w.SwitchBranch(ctx, root, name) }); handled {
+		if err != nil {
+			return SwitchResult{}, err
+		}
+		return SwitchResult{Branch: name}, nil
+	}
 	if _, err := r.Mutate(ctx, root, "switch", "--", name); err != nil {
 		return SwitchResult{}, err
 	}
@@ -121,10 +127,26 @@ func (r *Runner) CreateBranch(ctx context.Context, root, name string) (SwitchRes
 	if err := r.ValidateBranchName(ctx, root, name); err != nil {
 		return SwitchResult{}, err
 	}
+	// An unborn HEAD has no commit to start from: only `switch --create` can.
+	if r.hasHead(ctx, root) {
+		if handled, err := r.viaWriter(root, "switch", func(w WriteBackend) error { return w.CreateBranch(ctx, root, name, "HEAD") }); handled {
+			if err != nil {
+				return SwitchResult{}, err
+			}
+			return SwitchResult{Branch: name, Created: true}, nil
+		}
+	}
 	if _, err := r.Mutate(ctx, root, "switch", "--create", name); err != nil {
 		return SwitchResult{}, err
 	}
 	return SwitchResult{Branch: name, Created: true}, nil
+}
+
+// hasHead reports whether HEAD points at a commit (false in a repository
+// that has none yet).
+func (r *Runner) hasHead(ctx context.Context, root string) bool {
+	_, err := r.Read(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD")
+	return err == nil
 }
 
 // CheckoutRemoteBranch checks out a remote-tracking branch: the local branch
@@ -160,6 +182,9 @@ func (r *Runner) RenameBranch(ctx context.Context, root, name, to string) error 
 	if err := r.ValidateBranchName(ctx, root, to); err != nil {
 		return err
 	}
+	if handled, err := r.viaWriter(root, "branch", func(w WriteBackend) error { return w.RenameBranch(ctx, root, name, to) }); handled {
+		return err
+	}
 	_, err := r.Mutate(ctx, root, "branch", "-m", name, to)
 	return err
 }
@@ -171,6 +196,12 @@ func (r *Runner) CreateBranchAt(ctx context.Context, root, name, hash string) (S
 	}
 	if err := r.ValidateBranchName(ctx, root, name); err != nil {
 		return SwitchResult{}, err
+	}
+	if handled, err := r.viaWriter(root, "switch", func(w WriteBackend) error { return w.CreateBranch(ctx, root, name, hash) }); handled {
+		if err != nil {
+			return SwitchResult{}, err
+		}
+		return SwitchResult{Branch: name, Created: true}, nil
 	}
 	if _, err := r.Mutate(ctx, root, "switch", "--create", name, hash); err != nil {
 		return SwitchResult{}, err
