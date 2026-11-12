@@ -156,6 +156,9 @@ func (r *Runner) ApplyPatch(ctx context.Context, root, file string) error {
 	if _, err := r.Read(ctx, root, "apply", "--check", "--", file); err != nil {
 		return err
 	}
+	if r.Journal {
+		return r.journaledApplyPatch(ctx, root, file)
+	}
 	_, err = r.Mutate(ctx, root, "apply", "--whitespace=nowarn", "--", file)
 	return err
 }
@@ -443,6 +446,9 @@ func (r *Runner) StashPushPaths(ctx context.Context, root, message string, paths
 
 // StashClear drops every stash entry.
 func (r *Runner) StashClear(ctx context.Context, root string) error {
+	if r.Journal {
+		return r.journaledStashClear(ctx, root)
+	}
 	_, err := r.Mutate(ctx, root, "stash", "clear")
 	return err
 }

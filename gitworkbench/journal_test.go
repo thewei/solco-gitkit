@@ -464,3 +464,149 @@ func TestStashDropOfAMissingStashLeavesNoRecord(t *testing.T) {
 		t.Errorf("records = %+v", ops)
 	}
 }
+
+// patchFixture commits a.txt and gone.txt, then returns the path of a patch
+// that edits a.txt, deletes gone.txt, adds new.txt and renames old.txt, with
+// the repository back at its committed state.
+func patchFixture(t *testing.T, root string) string {
+	t.Helper()
+	undoCommit(t, root, "a.txt", "a\n", "add a")
+	undoCommit(t, root, "gone.txt", "gone\n", "add gone")
+	undoCommit(t, root, "old.txt", "old\n", "add old")
+	writeRepoFile(t, root, "a.txt", "a edited by the patch\n")
+	runGit(t, root, "rm", "-q", "gone.txt")
+	runGit(t, root, "mv", "old.txt", "renamed.txt")
+	writeRepoFile(t, root, "new.txt", "new\n")
+	runGit(t, root, "add", "-A")
+	patch := filepath.Join(t.TempDir(), "p.patch")
+	if err := os.WriteFile(patch, []byte(runGit(t, root, "diff", "--cached", "-M", "--binary")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "reset", "-q", "--hard")
+	return patch
+}
+
+func TestApplyPatchKeepsARecoveryPointAndUndoPutsTheTreeBack(t *testing.T) {
+	root, r := journalRepo(t)
+	ctx := context.Background()
+	patch := patchFixture(t, root)
+
+	if err := r.ApplyPatch(ctx, root, patch); err != nil {
+		t.Fatal(err)
+	}
+	if readRepoFile(t, root, "a.txt") != "a edited by the patch\n" || readRepoFile(t, root, "new.txt") != "new\n" || readRepoFile(t, root, "renamed.txt") != "old\n" {
+		t.Fatal("the patch did not apply")
+	}
+	op := onlyOperation(t, r, root)
+	if op.Kind != OpKindApplyPatch || op.After == "" || !op.CanUndo() {
+		t.Fatalf("record = %+v", op)
+	}
+	if got := strings.Join(op.Paths, ","); !strings.Contains(got, "old.txt") || !strings.Contains(got, "renamed.txt") {
+		t.Errorf("a rename must record both names, got %s", got)
+	}
+
+	if err := r.UndoOperation(ctx, root, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if readRepoFile(t, root, "a.txt") != "a\n" || readRepoFile(t, root, "gone.txt") != "gone\n" || readRepoFile(t, root, "old.txt") != "old\n" {
+		t.Error("the files the patch changed did not come back")
+	}
+	for _, p := range []string{"new.txt", "renamed.txt"} {
+		if _, err := os.Stat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s should be gone again (stat err = %v)", p, err)
+		}
+	}
+	if got := strings.TrimSpace(runGit(t, root, "status", "--porcelain=v1")); got != "" {
+		t.Errorf("the tree is not clean after recovery: %q", got)
+	}
+}
+
+func TestUndoApplyPatchRefusesWhenAFileChangedSince(t *testing.T) {
+	root, r := journalRepo(t)
+	ctx := context.Background()
+	patch := patchFixture(t, root)
+	if err := r.ApplyPatch(ctx, root, patch); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, root, "a.txt", "a edited by the patch, then by me\n")
+	err := r.UndoOperation(ctx, root, onlyOperation(t, r, root).ID)
+	if ge, ok := GitError(err); !ok || ge.Class != ErrStaleState {
+		t.Fatalf("err = %v, want a stale-state refusal", err)
+	}
+	if readRepoFile(t, root, "a.txt") != "a edited by the patch, then by me\n" || readRepoFile(t, root, "new.txt") != "new\n" {
+		t.Error("a refused recovery changed files")
+	}
+}
+
+func TestPatchThatDoesNotFitLeavesNoRecord(t *testing.T) {
+	root, r := journalRepo(t)
+	patch := patchFixture(t, root)
+	writeRepoFile(t, root, "a.txt", "a conflicting local edit\n")
+	if err := r.ApplyPatch(context.Background(), root, patch); err == nil {
+		t.Fatal("a patch that does not fit was applied")
+	}
+	if ops := mustOps(t, r, root); len(ops) != 0 {
+		t.Errorf("records = %+v", ops)
+	}
+}
+
+func TestPatchNamingAPathOutsideTheRepositoryIsRefused(t *testing.T) {
+	root, r := journalRepo(t)
+	patch := filepath.Join(t.TempDir(), "evil.patch")
+	body := "diff --git a/../../evil.txt b/../../evil.txt\nnew file mode 100644\n--- /dev/null\n+++ b/../../evil.txt\n@@ -0,0 +1 @@\n+x\n"
+	if err := os.WriteFile(patch, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ApplyPatch(context.Background(), root, patch); err == nil {
+		t.Fatal("applied a patch that leaves the repository")
+	}
+}
+
+func TestStashClearKeepsEveryStashInOrder(t *testing.T) {
+	root, r := journalRepo(t)
+	ctx := context.Background()
+	for _, name := range []string{"first", "second", "third"} {
+		writeRepoFile(t, root, "base.txt", name+" edit\n")
+		runGit(t, root, "stash", "push", "-q", "-m", name)
+	}
+	before := runGit(t, root, "stash", "list", "--format=%H %gs")
+
+	if err := r.StashClear(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "stash", "list")); got != "" {
+		t.Fatalf("stashes remain: %q", got)
+	}
+	op := onlyOperation(t, r, root)
+	if op.Kind != OpKindStashClear || !op.CanUndo() {
+		t.Fatalf("record = %+v", op)
+	}
+	if err := r.UndoOperation(ctx, root, op.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := runGit(t, root, "stash", "list", "--format=%H %gs")
+	// The messages come back as the stash subjects ("On main: third"): compare hashes and order.
+	hashes := func(list string) []string {
+		var out []string
+		for _, l := range strings.Split(strings.TrimSpace(list), "\n") {
+			out = append(out, strings.Fields(l)[0])
+		}
+		return out
+	}
+	if got, want := strings.Join(hashes(after), ","), strings.Join(hashes(before), ","); got != want {
+		t.Errorf("stash order after recovery\n got %s\nwant %s", got, want)
+	}
+	if !strings.Contains(after, "third") || !strings.Contains(after, "first") {
+		t.Errorf("stash list = %q", after)
+	}
+}
+
+func TestStashClearWithNothingToClearLeavesNoRecord(t *testing.T) {
+	root, r := journalRepo(t)
+	if err := r.StashClear(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	if ops := mustOps(t, r, root); len(ops) != 0 {
+		t.Errorf("records = %+v", ops)
+	}
+}

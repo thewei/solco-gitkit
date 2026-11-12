@@ -19,8 +19,11 @@ import (
 // snapshotEnv is the identity the hidden snapshot commits carry: they are
 // private to the repository's git directory and never reach a branch.
 func snapshotEnv(index string) []string {
+	return append(identityEnv(), "GIT_INDEX_FILE="+index)
+}
+
+func identityEnv() []string {
 	return append(mutateEnv(),
-		"GIT_INDEX_FILE="+index,
 		"GIT_AUTHOR_NAME=Solco Git", "GIT_AUTHOR_EMAIL=solco-git@localhost",
 		"GIT_COMMITTER_NAME=Solco Git", "GIT_COMMITTER_EMAIL=solco-git@localhost")
 }
@@ -171,7 +174,7 @@ func (r *Runner) runMutatingStdin(ctx context.Context, root string, env []string
 // journaledWork runs action as a journaled destructive operation: pin a
 // recovery point, record it pending, run, settle the record. Nothing runs when
 // the recovery point cannot be kept.
-func (r *Runner) journaledWork(ctx context.Context, root string, op Operation, capture func() (string, error), action func() error, fill func(*Operation)) error {
+func (r *Runner) journaledWork(ctx context.Context, root string, op Operation, capture func() (string, error), action func() error, fill, after func(*Operation)) error {
 	unlock, err := r.LockRepo(root, op.Kind)
 	if err != nil {
 		return err
@@ -190,6 +193,11 @@ func (r *Runner) journaledWork(ctx context.Context, root string, op Operation, c
 		return err
 	}
 	actionErr := action()
+	if actionErr == nil && after != nil {
+		// What the operation left behind, so a later recovery can tell
+		// whether anything touched it since.
+		after(&rec)
+	}
 	r.journalFinish(ctx, root, rec, actionErr)
 	return actionErr
 }
@@ -289,6 +297,10 @@ func (r *Runner) UndoOperation(ctx context.Context, root, id string) error {
 		err = r.undoBranchDelete(ctx, root, op)
 	case OpKindStashDrop:
 		err = r.undoStashDrop(ctx, root, op)
+	case OpKindApplyPatch:
+		err = r.undoApplyPatch(ctx, root, op)
+	case OpKindStashClear:
+		err = r.undoStashClear(ctx, root, op)
 	default:
 		err = refusal("recover", "this kind of entry cannot be recovered yet")
 	}

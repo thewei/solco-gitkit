@@ -31,6 +31,8 @@ const (
 	OpKindDeleteUntracked = "delete-untracked"
 	OpKindBranchDelete    = "branch-delete"
 	OpKindStashDrop       = "stash-drop"
+	OpKindStashClear      = "stash-clear"
+	OpKindApplyPatch      = "apply-patch"
 
 	OpStatusPending     = "pending"
 	OpStatusSucceeded   = "succeeded"
@@ -70,6 +72,9 @@ type Operation struct {
 	// (a tree of the affected paths; for a branch, its tip; for a stash, the
 	// stash commit).
 	Snapshot string `json:"snapshot,omitempty"`
+	// After is the tree the touched paths had once the operation finished
+	// (apply-patch): recovery refuses when they are no longer that.
+	After string `json:"after_tree,omitempty"`
 	// Name is the branch's or stash's own name, for the kinds that have one.
 	Name  string `json:"name,omitempty"`
 	Error string `json:"error,omitempty"`

@@ -67,7 +67,7 @@ func (r *Runner) Discard(ctx context.Context, root string, paths []string) error
 			func() error {
 				_, err := r.runMutating(ctx, root, mutateEnv(), append([]string{"restore", "--"}, paths...)...)
 				return err
-			}, func(op *Operation) { op.Removed = removed })
+			}, func(op *Operation) { op.Removed = removed }, nil)
 	}
 	_, err := r.Mutate(ctx, root, append([]string{"restore", "--"}, paths...)...)
 	return err
@@ -108,7 +108,7 @@ func (r *Runner) DeleteUntracked(root string, paths []string) error {
 	if r.Journal {
 		ctx := context.Background()
 		return r.journaledWork(ctx, root, Operation{Kind: OpKindDeleteUntracked, Paths: paths},
-			func() (string, error) { return r.captureUntracked(ctx, root, paths) }, remove, nil)
+			func() (string, error) { return r.captureUntracked(ctx, root, paths) }, remove, nil, nil)
 	}
 	return remove()
 }
@@ -215,7 +215,7 @@ func (r *Runner) StashDrop(ctx context.Context, root, ref string) error {
 				}
 				_, err := r.runMutating(ctx, root, mutateEnv(), "stash", "drop", ref)
 				return err
-			}, func(op *Operation) { op.Name = message })
+			}, func(op *Operation) { op.Name = message }, nil)
 	}
 	if handled, err := r.viaWriter(root, "stash", func(w WriteBackend) error { return w.StashDrop(ctx, root, stashIndex(ref)) }); handled {
 		return err
@@ -378,7 +378,7 @@ func (r *Runner) DeleteBranch(ctx context.Context, root, name string) error {
 				}
 				_, err := r.runMutating(ctx, root, mutateEnv(), "branch", "-d", name)
 				return err
-			}, nil)
+			}, nil, nil)
 	}
 	if handled, err := r.viaWriter(root, "branch", func(w WriteBackend) error { return w.DeleteBranch(ctx, root, name) }); handled {
 		return err
