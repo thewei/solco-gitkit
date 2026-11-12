@@ -31,6 +31,14 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Engine (nested module, LazyGit) vet
+        working-directory: engine
+        run: go vet ./...
+
+      - name: Engine (nested module, LazyGit) test
+        working-directory: engine
+        run: go test -race ./...
+
       - name: Only the standard library
         run: |
           if go list -deps ./... | grep -E '^[^/]+\.[^/]+/' | grep -v '^github.com/thewei/solco-gitkit/'; then

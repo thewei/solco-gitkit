@@ -7,6 +7,7 @@ Read `CLAUDE.md` first: it names the two packages and the rules a package here m
 ```sh
 GOTOOLCHAIN=auto go vet ./...
 GOTOOLCHAIN=auto go test ./...
+(cd engine && GOTOOLCHAIN=auto go vet ./... && GOTOOLCHAIN=auto go test -race ./...)
 GOTOOLCHAIN=auto go list -deps ./... | rg '^[^/]+\.[^/]+/' | rg -v '^github.com/thewei/solco-gitkit/'   # prints nothing
 git diff --check
 ```

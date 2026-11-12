@@ -4,6 +4,7 @@
 Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域服务：Runner 负责仓库读取与受控变更，界面层（Solco 的 nativeui、Solco Git 的呈现层）只能消费快照及显式执行操作。本模块不持有 Herdr Workspace/Pane 权威，也不提供展示组件。
 
 成员清单
+- `backend.go`：Runner 的可选第二实现的接缝——`Backend` 标记接口、按能力分组的小接口（现有 `BranchBackend`、`HistoryBackend`）、`NewError`/`ClassifyStderr`（让后端返回同一套 `*Error` 类别）；对应的 Runner 方法先问 Backend，没实现就走 argv 版 git；单仓库串行仍由 Runner 持有，后端不得再锁（2026-11-12）。
 - `branches.go`：读取本地分支、只读远程跟踪引用，校验并安全切换/创建本地分支；`CheckoutRemoteBranch`/`RenameBranch`/`CreateBranchAt`（在指定提交处建分支）。
 - `branches_test.go`：本地分支发现及当前分支测试。
 - `remote_branches_test.go`：读取真实 Git refs/remotes、忽略符号 HEAD 的契约测试。
@@ -45,6 +46,7 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `patch.go`：Diff/hunk 补丁构建和应用。
 - `repository.go`：Git 仓库元数据读取。
 - `runner.go`：带超时、错误分类与单仓库串行的 Git 命令边界。
+- `history_rewrite.go`：`RewriteHistory`（reword / squash / fixup / drop / move 一段相邻提交；需要 `HistoryBackend`，没有就拒绝；先要求干净工作区与已附着分支，失败即中止变基）。与 `InteractiveRebase`（整份 todo、argv 实现）并存。
 - `sequencer.go`：merge/revert/cherry-pick 状态探测和完成/中止；`RebaseOnto`（冲突即 abort 并回报冲突文件）。
 - `sequencer_test.go`：sequencer 事务状态测试。
 - `tree.go`：变更文件的目录树、折叠与过滤模型。

@@ -336,6 +336,9 @@ type Tag struct{ Name string }
 
 // ListTags enumerates tags, newest creation first, bounded.
 func (r *Runner) ListTags(ctx context.Context, root string) ([]Tag, error) {
+	if b, ok := r.Backend.(TagBackend); ok {
+		return b.ListTags(ctx, root)
+	}
 	out, err := r.Read(ctx, root, "tag", "--sort=-creatordate")
 	if err != nil {
 		return nil, err
@@ -402,6 +405,9 @@ type Worktree struct {
 
 // ListWorktrees enumerates the repository's work trees (no network).
 func (r *Runner) ListWorktrees(ctx context.Context, root string) ([]Worktree, error) {
+	if b, ok := r.Backend.(WorktreeBackend); ok {
+		return b.ListWorktrees(ctx, root)
+	}
 	out, err := r.Read(ctx, root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err

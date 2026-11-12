@@ -170,6 +170,9 @@ type Runner struct {
 	GitBinary string
 	// Now overrides the clock for tests.
 	Now func() time.Time
+	// Backend, when set, serves the capabilities it implements (see
+	// backend.go); the rest run on the argv path below.
+	Backend Backend
 
 	mu       sync.Mutex
 	mutating map[string]bool // repo root -> mutation in flight

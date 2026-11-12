@@ -22,6 +22,9 @@ type Branch struct {
 
 // ListBranches enumerates local branches cheaply (no network).
 func (r *Runner) ListBranches(ctx context.Context, root string) ([]Branch, error) {
+	if b, ok := r.Backend.(BranchBackend); ok {
+		return b.ListBranches(ctx, root)
+	}
 	out, err := r.Read(ctx, root,
 		"for-each-ref", "--format=%(refname:short)%09%(objectname:short)%09%(HEAD)%09%(upstream:short)", "refs/heads")
 	if err != nil {
