@@ -56,6 +56,19 @@ func (r *Runner) Discard(ctx context.Context, root string, paths []string) error
 	if len(paths) == 0 {
 		return errors.New("no paths to discard")
 	}
+	if r.Journal {
+		var removed []string
+		return r.journaledWork(ctx, root, Operation{Kind: OpKindDiscard, Paths: paths},
+			func() (string, error) {
+				snap, gone, err := r.captureTracked(ctx, root, paths)
+				removed = gone
+				return snap, err
+			},
+			func() error {
+				_, err := r.runMutating(ctx, root, mutateEnv(), append([]string{"restore", "--"}, paths...)...)
+				return err
+			}, func(op *Operation) { op.Removed = removed })
+	}
 	_, err := r.Mutate(ctx, root, append([]string{"restore", "--"}, paths...)...)
 	return err
 }
@@ -82,11 +95,22 @@ func (r *Runner) DeleteUntracked(root string, paths []string) error {
 			return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "delete",
 				err: fmt.Errorf("refusing to delete %q", rel)}
 		}
-		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-			return &Error{Class: ErrOther, OpClass: OpMutate, Op: "delete", err: err}
-		}
 	}
-	return nil
+	remove := func() error {
+		for _, rel := range paths {
+			target := filepath.Clean(filepath.Join(root, filepath.FromSlash(rel)))
+			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+				return &Error{Class: ErrOther, OpClass: OpMutate, Op: "delete", err: err}
+			}
+		}
+		return nil
+	}
+	if r.Journal {
+		ctx := context.Background()
+		return r.journaledWork(ctx, root, Operation{Kind: OpKindDeleteUntracked, Paths: paths},
+			func() (string, error) { return r.captureUntracked(ctx, root, paths) }, remove, nil)
+	}
+	return remove()
 }
 
 // Stash is one entry of the stash list.

@@ -173,6 +173,9 @@ type Runner struct {
 	// Backend, when set, serves the capabilities it implements (see
 	// backend.go); the rest run on the argv path below.
 	Backend Backend
+	// Journal turns on the Safety Journal (journal.go): Discard, DeleteUntracked,
+	// DeleteBranch and StashDrop keep a recovery point first. Off by default.
+	Journal bool
 
 	mu       sync.Mutex
 	mutating map[string]bool // repo root -> mutation in flight
@@ -340,6 +343,10 @@ func (r *Runner) run(ctx context.Context, class OpClass, timeout time.Duration, 
 }
 
 func (r *Runner) runStdin(ctx context.Context, class OpClass, timeout time.Duration, root, stdin string, args []string) ([]byte, error) {
+	return r.runStdinEnv(ctx, class, timeout, mutateEnv(), root, stdin, args)
+}
+
+func (r *Runner) runStdinEnv(ctx context.Context, class OpClass, timeout time.Duration, env []string, root, stdin string, args []string) ([]byte, error) {
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > timeout {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -347,7 +354,7 @@ func (r *Runner) runStdin(ctx context.Context, class OpClass, timeout time.Durat
 	}
 	cmd := exec.CommandContext(ctx, r.binary(), args...)
 	cmd.Dir = root
-	cmd.Env = append(environ(), mutateEnv()...)
+	cmd.Env = append(environ(), env...)
 	cmd.WaitDelay = 500 * time.Millisecond
 	cmd.Stdin = bytes.NewReader([]byte(stdin))
 
