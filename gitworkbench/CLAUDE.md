@@ -51,6 +51,7 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `write_backend.go`：`WriteBackend`（分支切换/创建/改名/删除、stash 推入/弹出/应用/丢弃、标签创建/删除）与 `viaWriter`：校验与参数形态留在 Runner，只把「执行那条 git 命令」交给后端；没有后端或该情形不适用时照旧 `Mutate`。
 - `amend_pick.go`：`AmendTo`（`AmendBackend`；只允许暂存改动，失败后连 fixup 提交一起回收、改动仍在暂存区，无 argv 回退）与 `CherryPickCommits`（`CherryPickBackend`，无后端时回落 `git cherry-pick --allow-empty`；校验在先、拒绝合并提交、冲突留给序列器继续/中止）。
 - `custom_patch.go`：`PatchSource` / `RewriteWithPatch`（`PatchBackend`；从提交移除 / 拆分 / 移动 / 撤回所选文件或行，校验在先、需干净工作区与已附着分支、冲突即中止，没有后端就拒绝，无 argv 回退）。
+- `reflog_undo.go`：`PlanReplay`（只读：下一步可撤销/重做的那个动作与它的身份串）/ `Replay`（按身份串撤销或重做 HEAD 上的 checkout、commit/reset/pull、一次完整 rebase）；LazyGit z/Z 与 TanGit 的 MIT 移植，argv 实现、不写新引用或文件——撤销与重做各写一条带 `[lazygit undo]` / `[lazygit redo]` 标记的 reflog 记录（与 LazyGit 命令行互认、重启后仍平衡）；撤销 commit 是 soft（改动留暂存），重做与 rebase 的两个方向是 hard 并先把已跟踪改动 stash 起来再放回；合并/变基进行中、身份串不符（HEAD 被别的客户端动过）一律拒绝（`reflog_undo_test.go`，每条变异检查过）。
 - `sequencer.go`：merge/revert/cherry-pick 状态探测和完成/中止；`RebaseOnto`（冲突即 abort 并回报冲突文件）。
 - `sequencer_test.go`：sequencer 事务状态测试。
 - `tree.go`：变更文件的目录树、折叠与过滤模型。
