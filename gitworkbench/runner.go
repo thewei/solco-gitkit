@@ -177,6 +177,8 @@ type Runner struct {
 	// Journal turns on the Safety Journal (journal.go): Discard, DeleteUntracked,
 	// DeleteBranch and StashDrop keep a recovery point first. Off by default.
 	Journal bool
+	// Commands, when set, keeps the Git commands this Runner runs (command_log.go).
+	Commands *CommandLog
 
 	mu       sync.Mutex
 	mutating map[string]bool // repo root -> mutation in flight
@@ -295,6 +297,13 @@ func first(args []string) string {
 }
 
 func (r *Runner) run(ctx context.Context, class OpClass, timeout time.Duration, maxOut int64, env []string, root string, args []string) ([]byte, error) {
+	start := time.Now()
+	out, err := r.runProcess(ctx, class, timeout, maxOut, env, root, args)
+	r.logCommand(root, args, class, start, err)
+	return out, err
+}
+
+func (r *Runner) runProcess(ctx context.Context, class OpClass, timeout time.Duration, maxOut int64, env []string, root string, args []string) ([]byte, error) {
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > timeout {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -349,6 +358,13 @@ func (r *Runner) runStdin(ctx context.Context, class OpClass, timeout time.Durat
 }
 
 func (r *Runner) runStdinEnv(ctx context.Context, class OpClass, timeout time.Duration, env []string, root, stdin string, args []string) ([]byte, error) {
+	start := time.Now()
+	out, err := r.runStdinProcess(ctx, class, timeout, env, root, stdin, args)
+	r.logCommand(root, args, class, start, err)
+	return out, err
+}
+
+func (r *Runner) runStdinProcess(ctx context.Context, class OpClass, timeout time.Duration, env []string, root, stdin string, args []string) ([]byte, error) {
 	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > timeout {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)

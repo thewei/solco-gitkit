@@ -32,6 +32,39 @@ var readSubcommands = map[string]bool{
 	"name-rev": true, "show-ref": true, "diff-tree": true, "reflog": true,
 }
 
+// readForms are the subcommands that both read and write, with the form that
+// only reads: `worktree list`, `stash list`, `tag --list`, `config --get…`.
+// Anything else of these stays a mutation.
+var readForms = map[string][]string{
+	"worktree": {"list"},
+	"stash":    {"list"},
+	"tag":      {"--list", "-l"},
+	"config":   {"--get", "--get-all", "--get-regexp", "--list", "-l"},
+}
+
+// isRead reports whether argv (executable first) only reads the repository.
+func isRead(args []string) bool {
+	sub := subcommand(args)
+	if readSubcommands[sub] {
+		return true
+	}
+	forms, ok := readForms[sub]
+	if !ok {
+		return false
+	}
+	// The read form must be the first word after the subcommand (a config
+	// scope may come before it): `stash push -m list` is not `stash list`.
+	for _, a := range args[slices.Index(args, sub)+1:] {
+		if slices.Contains(configScopes, a) {
+			continue
+		}
+		return slices.Contains(forms, a)
+	}
+	return false
+}
+
+var configScopes = []string{"--local", "--global", "--system", "--worktree"}
+
 // subcommand is the first word of argv that is not an option of git itself.
 // args[0] is the executable. `-c key=value` and `-C dir` take the next word.
 func subcommand(args []string) string {
@@ -92,29 +125,32 @@ func hasEditor(env []string, key string) bool {
 // policy. It ignores LazyGit's streaming, pty and credential strategies on
 // purpose: a command that would ask for a credential fails at once
 // (GIT_TERMINAL_PROMPT=0) instead of waiting for a person.
-type policyRunner struct{}
+type policyRunner struct {
+	log  *gitworkbench.CommandLog // nil: nothing is recorded
+	root string                   // the repository root the log files the commands under
+}
 
 var _ oscommands.ICmdObjRunner = policyRunner{}
 
-func (policyRunner) Run(c *oscommands.CmdObj) error {
-	_, stderr, err := execute(c)
+func (p policyRunner) Run(c *oscommands.CmdObj) error {
+	_, stderr, err := p.execute(c)
 	return sanitised(stderr, err)
 }
 
-func (policyRunner) RunWithOutput(c *oscommands.CmdObj) (string, error) {
-	stdout, stderr, err := execute(c)
+func (p policyRunner) RunWithOutput(c *oscommands.CmdObj) (string, error) {
+	stdout, stderr, err := p.execute(c)
 	// LazyGit's own RunWithOutput returns stdout and stderr together.
 	combined := stdout + stderr
 	return combined, sanitised(combined, err)
 }
 
-func (policyRunner) RunWithOutputs(c *oscommands.CmdObj) (string, string, error) {
-	stdout, stderr, err := execute(c)
+func (p policyRunner) RunWithOutputs(c *oscommands.CmdObj) (string, string, error) {
+	stdout, stderr, err := p.execute(c)
 	return stdout, stderr, sanitised(stderr, err)
 }
 
-func (policyRunner) RunAndProcessLines(c *oscommands.CmdObj, onLine func(string) (bool, error)) error {
-	stdout, stderr, err := execute(c)
+func (p policyRunner) RunAndProcessLines(c *oscommands.CmdObj, onLine func(string) (bool, error)) error {
+	stdout, stderr, err := p.execute(c)
 	if err != nil {
 		return sanitised(stderr, err)
 	}
@@ -147,7 +183,7 @@ func sanitised(detail string, err error) error {
 }
 
 // execute runs the command once, under the policy, with its own deadline.
-func execute(c *oscommands.CmdObj) (stdout, stderr string, err error) {
+func (p policyRunner) execute(c *oscommands.CmdObj) (stdout, stderr string, err error) {
 	if m := c.Mutex(); m != nil {
 		m.Lock()
 		defer m.Unlock()
@@ -156,11 +192,13 @@ func execute(c *oscommands.CmdObj) (stdout, stderr string, err error) {
 	sub := subcommand(src.Args)
 
 	class, timeout, env := gitworkbench.OpMutate, mutateTimeout, mutateEnv()
-	if readSubcommands[sub] {
+	if isRead(src.Args) {
 		class, timeout, env = gitworkbench.OpRead, readTimeout, readEnv()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	start := time.Now()
+	defer func() { p.record(src.Args, class, start, err) }()
 
 	cmd := exec.CommandContext(ctx, src.Path, src.Args[1:]...)
 	cmd.Dir = src.Dir
@@ -228,4 +266,19 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return w.buf.Write(p)
+}
+
+// record files one finished command in the log, if there is one.
+func (p policyRunner) record(args []string, class gitworkbench.OpClass, start time.Time, err error) {
+	if p.log == nil || len(args) == 0 {
+		return
+	}
+	e := gitworkbench.CommandEntry{Root: p.root, Args: args[1:], Class: class, Duration: time.Since(start)}
+	if err != nil {
+		e.Failure, e.ExitCode = gitworkbench.ErrOther, -1
+		if ge, ok := gitworkbench.GitError(err); ok {
+			e.Failure, e.ExitCode = ge.Class, ge.ExitCode
+		}
+	}
+	p.log.Record(e)
 }

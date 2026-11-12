@@ -5,7 +5,7 @@ solco-gitkit 里的嵌套 Go 模块（`github.com/thewei/solco-gitkit/engine`，
 
 成员清单
 - `engine.go`：`Engine`（装到 `runner.Backend`）与按仓库根缓存的 `session`；`newSession` 用 `NewGitCommandAux` 把命令层钉在目录上（上游构造器会 chdir，多仓库同开不行），runner 换成 `policyRunner`；不读用户的 lazygit 配置（`NewDummyAppConfig`）。
-- `policy.go`：`policyRunner`——整体替换 LazyGit 的 runner：读 5 s / 写 30 s（按子命令判读写，拿不准按写）、输出上限、`GIT_TERMINAL_PROMPT=0`/无分页/`LC_ALL=C`、失败一律 `*gitworkbench.Error`（含超时、取消、输出过大）；忽略 LazyGit 的流式/pty/凭据策略（要凭据的命令立刻失败）；不做单仓库串行（那在 Runner 一侧，后端不得再锁）。
+- `policy.go`：`policyRunner`——整体替换 LazyGit 的 runner：读 5 s / 写 30 s（按子命令判读写，`worktree list` / `stash list` / `tag --list` / `config --get…` 这些读写同名的只认紧跟子命令的读形态，拿不准按写）、每条命令结束时写命令日志（`Engine.Commands`，与 `Runner.Commands` 同一个）、输出上限、`GIT_TERMINAL_PROMPT=0`/无分页/`LC_ALL=C`、失败一律 `*gitworkbench.Error`（含超时、取消、输出过大）；忽略 LazyGit 的流式/pty/凭据策略（要凭据的命令立刻失败）；不做单仓库串行（那在 Runner 一侧，后端不得再锁）。
 - `branches.go`：`ListBranches`（BranchLoader；按名排序、不含游离 HEAD 与未出生分支、upstream 写成 remote/branch、head 取 7 位）。
 - `lists.go`：`ListTags`、`ListWorktrees`（对拍通过的读取组；`lists_test.go` 还含 remotes 为何不迁的证据测试）。
 - `history.go`：`RewriteHistory`——批量历史改写（reword / squash / fixup / drop / move，一段相邻提交）走 LazyGit 的 `Rebase` 命令组：载入 HEAD 的最近 1000 个提交，定位选中的连续区间，拒绝合并提交与过远的提交，其余交给 `RebaseCommands`；停下的变基由 `Runner.RewriteHistory` 负责中止（冲突报 `ErrConflict`）。

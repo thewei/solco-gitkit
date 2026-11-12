@@ -233,7 +233,7 @@ func TestPolicyOutputBound(t *testing.T) {
 
 func TestPolicyClassifiesGitFailures(t *testing.T) {
 	root := newRepo(t)
-	s, err := newSession(root)
+	s, err := newSession(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +258,61 @@ func TestSubcommand(t *testing.T) {
 	} {
 		if got := subcommand(args); got != want {
 			t.Errorf("subcommand(%v) = %q, want %q", args, got, want)
+		}
+	}
+}
+
+func TestPolicyRunnerFilesEveryCommandUnderTheSessionRoot(t *testing.T) {
+	root := newRepo(t)
+	log := gitworkbench.NewCommandLog()
+	b := oscommands.NewOSCommand(common.NewDummyCommon(), config.NewDummyAppConfig(), oscommands.GetPlatform(),
+		oscommands.NewNullGuiIO(common.NewDummyCommon().Log)).Cmd.
+		CloneWithNewRunner(func(oscommands.ICmdObjRunner) oscommands.ICmdObjRunner { return policyRunner{log: log, root: root} })
+
+	if err := b.New([]string{"git", "-C", root, "rev-parse", "--git-dir"}).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.New([]string{"git", "-C", root, "config", "user.name", "Somebody"}).Run(); err != nil {
+		t.Fatal(err)
+	}
+	_ = b.New([]string{"git", "-C", root, "rev-parse", "--verify", "--quiet", "nothing"}).Run()
+
+	got := log.Entries(root, true)
+	if len(got) != 3 {
+		t.Fatalf("entries = %+v, want three", got)
+	}
+	if got[0].Class != gitworkbench.OpRead || !got[0].Failed() || got[0].ExitCode != 1 {
+		t.Errorf("newest = %+v, want the failed read", got[0])
+	}
+	if got[1].Class != gitworkbench.OpMutate || !strings.Contains(got[1].Line(), "config user.name Somebody") || got[1].Failed() {
+		t.Errorf("middle = %+v (%s), want the tag write", got[1], got[1].Line())
+	}
+	if strings.HasPrefix(got[1].Args[0], "git") || got[2].Args[0] != "-C" {
+		t.Errorf("args must be argv after the executable, got %v", got[2].Args)
+	}
+}
+
+func TestReadFormsOfMixedSubcommandsAreReads(t *testing.T) {
+	cases := []struct {
+		args []string
+		read bool
+	}{
+		{[]string{"git", "worktree", "list", "--porcelain"}, true},
+		{[]string{"git", "stash", "list", "-z"}, true},
+		{[]string{"git", "tag", "--list", "-n"}, true},
+		{[]string{"git", "config", "--local", "--get-regexp", "^branch"}, true},
+		{[]string{"git", "-C", "/r", "config", "--get", "user.name"}, true},
+		{[]string{"git", "stash", "push", "-m", "list"}, false}, // a message that says "list" is still a write
+		{[]string{"git", "worktree", "add", "list"}, false},
+		{[]string{"git", "tag", "v1", "--list"}, false},
+		{[]string{"git", "config", "--unset", "x"}, false},
+		{[]string{"git", "commit", "-m", "x"}, false},
+		{[]string{"git", "status"}, true},
+		{[]string{"git", "stash"}, false},
+	}
+	for _, c := range cases {
+		if got := isRead(c.args); got != c.read {
+			t.Errorf("isRead(%v) = %v, want %v", c.args, got, c.read)
 		}
 	}
 }

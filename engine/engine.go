@@ -31,6 +31,10 @@ import (
 // Engine serves gitworkbench.Backend capabilities from LazyGit's command
 // layer. One Engine holds one session per repository root.
 type Engine struct {
+	// Commands, when set before the first call, receives every command the
+	// engine runs (the same log as Runner.Commands).
+	Commands *gitworkbench.CommandLog
+
 	mu       sync.Mutex
 	sessions map[string]*session
 }
@@ -85,7 +89,7 @@ func (e *Engine) session(root string) (*session, error) {
 	if s, ok := e.sessions[root]; ok {
 		return s, nil
 	}
-	s, err := newSession(root)
+	s, err := newSession(root, e.Commands)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +101,7 @@ func (e *Engine) session(root string) (*session, error) {
 // working directory (the library's own constructor changes it, and several
 // repositories are open at once): every command is pinned to root by the
 // builder the layer is given.
-func newSession(root string) (_ *session, err error) {
+func newSession(root string, log *gitworkbench.CommandLog) (_ *session, err error) {
 	cmn := common.NewDummyCommon()
 	tempDir, err := os.MkdirTemp("", "solco-engine-")
 	if err != nil {
@@ -112,7 +116,7 @@ func newSession(root string) (_ *session, err error) {
 	osCommand := oscommands.NewOSCommand(cmn, appConfig, oscommands.GetPlatform(),
 		oscommands.NewNullGuiIO(cmn.Log))
 	osCommand.Cmd = osCommand.Cmd.CloneWithNewRunner(func(oscommands.ICmdObjRunner) oscommands.ICmdObjRunner {
-		return policyRunner{}
+		return policyRunner{log: log, root: root}
 	})
 	version, err := git_commands.GetGitVersion(osCommand)
 	if err != nil {
