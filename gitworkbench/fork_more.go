@@ -165,6 +165,11 @@ func (r *Runner) StashPatch(ctx context.Context, root, ref string) ([]byte, erro
 // tree and refs are never touched (only unreferenced blob objects may be
 // written, which `git gc` prunes).
 func (r *Runner) WorkingPatch(ctx context.Context, root string) ([]byte, error) {
+	return r.workingPatch(ctx, root, nil)
+}
+
+// workingPatch is WorkingPatch for the given paths only (all when none).
+func (r *Runner) workingPatch(ctx context.Context, root string, paths []string) ([]byte, error) {
 	tmp, err := os.CreateTemp("", "solco-patch-index-*")
 	if err != nil {
 		return nil, err
@@ -186,11 +191,15 @@ func (r *Runner) WorkingPatch(ctx context.Context, root string) ([]byte, error) 
 	} else if _, err := r.mutateEnv(ctx, root, env, "read-tree", "HEAD"); err != nil {
 		return nil, err
 	}
-	if _, err := r.mutateEnv(ctx, root, env, "add", "-A", "--", "."); err != nil {
+	add, diff := []string{"add", "-A", "--", "."}, []string{"diff", "--cached", "--binary", "--no-color", base}
+	if len(paths) > 0 {
+		add = append([]string{"--literal-pathspecs", "add", "-A", "--"}, paths...)
+		diff = append([]string{"--literal-pathspecs", "diff", "--cached", "--binary", "--no-color", "-M", base, "--"}, paths...)
+	}
+	if _, err := r.mutateEnv(ctx, root, env, add...); err != nil {
 		return nil, err
 	}
-	out, err := r.run(ctx, OpRead, ReadTimeout, MaxReadOutput, append(readEnv(), "GIT_INDEX_FILE="+name), root,
-		[]string{"diff", "--cached", "--binary", "--no-color", base})
+	out, err := r.run(ctx, OpRead, ReadTimeout, MaxReadOutput, append(readEnv(), "GIT_INDEX_FILE="+name), root, diff)
 	if err != nil {
 		return nil, err
 	}

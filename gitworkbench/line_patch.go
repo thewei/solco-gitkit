@@ -23,15 +23,31 @@ import (
 // selected holds indices into h.Lines; only additions and deletions count.
 // It returns false when the selection holds no change line.
 func LinePatch(path string, h Hunk, selected map[int]bool, unstage bool) (string, bool) {
-	var body strings.Builder
-	oldN, newN := 0, 0
-	picked := false
+	body, oldN, newN, picked := hunkBody(h, selected, unstage)
+	if !picked {
+		return "", false
+	}
+	start := h.OldStart
+	if unstage {
+		start = h.NewStart
+	}
+	var out strings.Builder
+	out.WriteString("diff --git a/" + path + " b/" + path + "\n")
+	out.WriteString("--- a/" + path + "\n+++ b/" + path + "\n")
+	out.WriteString("@@ -" + hunkRange(start, oldN) + " +" + hunkRange(start, newN) + " @@\n")
+	out.WriteString(body)
+	return out.String(), true
+}
+
+// hunkBody is the lines of LinePatch's hunk and their counts on each side.
+func hunkBody(h Hunk, selected map[int]bool, unstage bool) (body string, oldN, newN int, picked bool) {
+	var sb strings.Builder
 	emit := func(prefix byte, l DiffLine) {
-		body.WriteByte(prefix)
-		body.WriteString(l.Text)
-		body.WriteByte('\n')
+		sb.WriteByte(prefix)
+		sb.WriteString(l.Text)
+		sb.WriteByte('\n')
 		if l.NoNewline {
-			body.WriteString("\\ No newline at end of file\n")
+			sb.WriteString("\\ No newline at end of file\n")
 		}
 	}
 	for i, l := range h.Lines {
@@ -64,19 +80,7 @@ func LinePatch(path string, h Hunk, selected map[int]bool, unstage bool) (string
 			}
 		}
 	}
-	if !picked {
-		return "", false
-	}
-	start := h.OldStart
-	if unstage {
-		start = h.NewStart
-	}
-	var out strings.Builder
-	out.WriteString("diff --git a/" + path + " b/" + path + "\n")
-	out.WriteString("--- a/" + path + "\n+++ b/" + path + "\n")
-	out.WriteString("@@ -" + hunkRange(start, oldN) + " +" + hunkRange(start, newN) + " @@\n")
-	out.WriteString(body.String())
-	return out.String(), true
+	return sb.String(), oldN, newN, picked
 }
 
 // hunkRange writes a unified-diff range: "start,count", or "start" for one line.

@@ -157,7 +157,7 @@ func (r *Runner) ApplyPatch(ctx context.Context, root, file string) error {
 		return err
 	}
 	if r.Journal {
-		return r.journaledApplyPatch(ctx, root, file)
+		return r.journaledApplyPatch(ctx, root, file, false)
 	}
 	_, err = r.Mutate(ctx, root, "apply", "--whitespace=nowarn", "--", file)
 	return err

@@ -103,7 +103,7 @@ func (r *Runner) worktreeTree(ctx context.Context, root string, paths []string) 
 
 // journaledApplyPatch is ApplyPatch's `git apply` step under the journal: the
 // touched paths are kept as they are now, and recorded as they become.
-func (r *Runner) journaledApplyPatch(ctx context.Context, root, file string) error {
+func (r *Runner) journaledApplyPatch(ctx context.Context, root, file string, reverse bool) error {
 	paths, err := r.patchPaths(ctx, root, file)
 	if err != nil {
 		return err
@@ -126,7 +126,11 @@ func (r *Runner) journaledApplyPatch(ctx context.Context, root, file string) err
 			}, "")
 		},
 		func() error {
-			_, err := r.runMutating(ctx, root, mutateEnv(), "apply", "--whitespace=nowarn", "--", file)
+			args := []string{"apply", "--whitespace=nowarn"}
+			if reverse {
+				args = append(args, "--reverse")
+			}
+			_, err := r.runMutating(ctx, root, mutateEnv(), append(args, "--", file)...)
 			return err
 		},
 		func(op *Operation) { op.Removed = removed },
