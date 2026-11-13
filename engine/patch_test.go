@@ -274,3 +274,47 @@ func TestRewriteWithPatchRefusals(t *testing.T) {
 		}
 	})
 }
+
+// The selection a user makes on the diff the review shows reaches the same
+// lines Git's patch builder rewrites: pick "+l4" of X through the shown hunks.
+func TestSelectionOnTheShownDiffRemovesJustThoseLines(t *testing.T) {
+	root, h := patchRepo(t, false)
+	r := &gitworkbench.Runner{Backend: New()}
+	ctx := context.Background()
+	snap, err := r.CommitSnapshot(ctx, root, h["X"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shown []gitworkbench.Hunk
+	for _, f := range snap.Files {
+		if f.Path == "a.txt" {
+			shown = f.Hunks
+		}
+	}
+	picks := map[[2]int]bool{}
+	for hi, hk := range shown {
+		for li, l := range hk.Lines {
+			if l.Kind == gitworkbench.KindAdd && l.Text == "l4" {
+				picks[[2]int{hi, li}] = true
+			}
+		}
+	}
+	if len(picks) != 1 {
+		t.Fatalf("did not find the added line in %+v", shown)
+	}
+	src, err := r.PatchSource(ctx, root, h["X"], "a.txt", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := gitworkbench.PatchLinesFor(src, shown, picks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := gitworkbench.PatchOp{Action: gitworkbench.PatchRemove, Commit: h["X"], Files: []gitworkbench.PatchFile{{Path: "a.txt", Lines: lines}}}
+	if err := r.RewriteWithPatch(ctx, root, op); err != nil {
+		t.Fatal(err)
+	}
+	if got := show(t, root, "HEAD", "a.txt"); got != "l1\nl2x\nl3" {
+		t.Errorf("a.txt = %q, want the l2x edit kept and only l4 gone", got)
+	}
+}

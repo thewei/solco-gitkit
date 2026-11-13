@@ -2,6 +2,7 @@ package gitworkbench
 
 import (
 	"context"
+	"slices"
 	"strings"
 )
 
@@ -166,4 +167,61 @@ func validatePatchOp(op PatchOp) error {
 		}
 	}
 	return nil
+}
+
+// PatchLinesFor turns a selection made on the diff the user sees (picks are
+// {hunk, line index in Hunk.Lines}) into the PatchSourceLine indices
+// RewriteWithPatch takes. The two diffs are read by different code, so every
+// line is matched by kind and text first: a file whose two readings differ is
+// refused (select it whole instead) rather than patched on a guess.
+func PatchLinesFor(src []PatchSourceLine, hunks []Hunk, picks map[[2]int]bool) ([]int, error) {
+	var perHunk [][]int
+	inHunk := false
+	for _, l := range src {
+		switch {
+		case strings.HasPrefix(l.Text, "@@"):
+			inHunk = true
+			perHunk = append(perHunk, nil)
+		case strings.HasPrefix(l.Text, "diff --git"):
+			inHunk = false
+		case inHunk && l.Text != "" && strings.ContainsRune(" +-", rune(l.Text[0])):
+			perHunk[len(perHunk)-1] = append(perHunk[len(perHunk)-1], l.Index)
+		}
+	}
+	mismatch := refusal("patch", "the diff shown here does not line up with the one Git rewrites; select the whole file instead")
+	if len(perHunk) != len(hunks) {
+		return nil, mismatch
+	}
+	text := map[int]string{}
+	for _, l := range src {
+		text[l.Index] = l.Text
+	}
+	for h, idx := range perHunk {
+		if len(idx) != len(hunks[h].Lines) {
+			return nil, mismatch
+		}
+		for i, at := range idx {
+			want, got := hunks[h].Lines[i], text[at]
+			kind := KindContext
+			switch got[0] {
+			case '+':
+				kind = KindAdd
+			case '-':
+				kind = KindDelete
+			}
+			if kind != want.Kind || got[1:] != want.Text {
+				return nil, mismatch
+			}
+		}
+	}
+	var out []int
+	for key := range picks {
+		h, i := key[0], key[1]
+		if h < 0 || h >= len(hunks) || i < 0 || i >= len(hunks[h].Lines) || hunks[h].Lines[i].Kind == KindContext {
+			return nil, refusal("patch", "a picked line is not a changed line")
+		}
+		out = append(out, perHunk[h][i])
+	}
+	slices.Sort(out)
+	return out, nil
 }
