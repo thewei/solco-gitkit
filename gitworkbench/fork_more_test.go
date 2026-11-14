@@ -400,3 +400,46 @@ func TestStashPatchIncludesUntrackedAndRefusesBadRefs(t *testing.T) {
 		t.Fatal("a missing stash is an error")
 	}
 }
+
+func TestCompareCommitsReadsTwoCommitsAgainstEachOtherNotTheirParents(t *testing.T) {
+	root, r := tempRepo(t)
+	ctx, cancel := opCtx(t)
+	defer cancel()
+	first := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+	commitFile(t, root, "mid.txt", "mid\n", "add mid")
+	commitFile(t, root, "base.txt", "base line 1\nbase line 2\nthird\n", "grow base")
+	last := commitFile(t, root, "mid.txt", "mid\nmore\n", "grow mid")
+
+	snap, err := r.CompareCommits(ctx, root, first, last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.DiffBase != first+".."+last || snap.Head != last {
+		t.Fatalf("DiffBase %q Head %q: the pair is the review's base", snap.DiffBase, snap.Head)
+	}
+	got := map[string]ChangeStatus{}
+	for _, f := range snap.Files {
+		got[f.Path] = f.Status
+	}
+	// mid.txt is Added across the pair although the last commit only edited it.
+	if len(got) != 2 || got["mid.txt"] != StatusAdded || got["base.txt"] != StatusModified {
+		t.Fatalf("files = %v", got)
+	}
+	if snap.TotalAdditions != 3 || snap.TotalDeletions != 0 {
+		t.Fatalf("+%d -%d, want +3 -0", snap.TotalAdditions, snap.TotalDeletions)
+	}
+
+	back, err := r.CompareCommits(ctx, root, last, first)
+	if err != nil || back.TotalAdditions != 0 || back.TotalDeletions != 3 {
+		t.Fatalf("swapped pair = %+v, %v", back, err)
+	}
+	same, err := r.CompareCommits(ctx, root, last, last)
+	if err != nil || len(same.Files) != 0 {
+		t.Fatalf("a commit against itself is empty: %+v, %v", same, err)
+	}
+	for _, bad := range [][2]string{{first, "nope"}, {"-x", last}, {first, last + "^{tree}x"}} {
+		if _, err := r.CompareCommits(ctx, root, bad[0], bad[1]); err == nil {
+			t.Errorf("%v must be refused", bad)
+		}
+	}
+}

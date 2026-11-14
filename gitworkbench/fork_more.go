@@ -228,6 +228,31 @@ func (r *Runner) CompareToWorktree(ctx context.Context, root, hash string) (*Cha
 	return snap, nil
 }
 
+// CompareCommits is the review of two commits against each other: what a
+// change from base to hash would be (`git diff base hash`), as one snapshot
+// whose DiffBase is base..hash, the shape a single commit's review has.
+func (r *Runner) CompareCommits(ctx context.Context, root, base, hash string) (*ChangesSnapshot, error) {
+	full := [2]string{}
+	for i, rev := range []string{base, hash} {
+		out, err := r.Read(ctx, root, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return nil, &Error{Class: ErrStaleState, OpClass: OpRead, Op: "diff", err: fmt.Errorf("%q is not a commit", rev)}
+		}
+		full[i] = strings.TrimSpace(string(out))
+	}
+	rangeArg := full[0] + ".." + full[1]
+	snap := &ChangesSnapshot{Root: root, Head: full[1], Signature: "compare:" + rangeArg, GeneratedAt: r.now(), DiffBase: rangeArg}
+	budget := &snapshotBudget{limit: MaxSnapshotBytes}
+	files, adds, dels, truncated, err := r.rangeFiles(ctx, root, rangeArg, budget)
+	if err != nil {
+		snap.Err = err.Error()
+		return snap, err
+	}
+	snap.Files, snap.TotalAdditions, snap.TotalDeletions, snap.Truncated = files, adds, dels, truncated
+	sortFilesByPath(snap.Files)
+	return snap, nil
+}
+
 // ---- file history and blame ------------------------------------------------
 
 // cleanRelPath refuses anything but a plain repository-relative path.
