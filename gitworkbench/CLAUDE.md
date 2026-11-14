@@ -64,7 +64,7 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `conflict.go`：冲突编辑内核（2026-11-12 决定第 (3)(10) 条）：`ReadConflict`（读 index stage 1/2/3 三份内容，用 `git merge-file -p --diff3 --marker-size=29` 让 Git 自己算合并并切成块——退出码是冲突数、由 `Error.out` 取回标准输出；29 个字符的标记让内容里的 `=======` 不会撞上；一方删除 / 二进制 / 过大 / 链接与子模块返回 `Editable=false` 与原因）、`ParseConflictMarkers` / `BuildConflictResult`（块与每块的选择 Current / Incoming / Both / Base / 未决 → 结果文本，纯函数，未决块留 7 字符标记）、`ResolveWith`（写入工作区并 `git add`；结果仍含标记、过大、含 NUL、文件已不在冲突中都拒绝；`Journal` 开时先把原工作区文件钉成恢复点并记下写后的树）、`undoResolve`（Recovery 找回 = 重新打开冲突并放回原文件；暂停的合并必须还在、文件不能被改过，否则 `ErrStaleState`；Git 在合并提交后仍保留 resolve-undo 数据，所以单靠 `update-index --unresolve` 不够）（`conflict_test.go`，每条变异检查过）。
 - `command_log.go`：命令日志内核（2026-11-12 决定第 (11) 条）：`CommandLog`（内存环形记录，读 400 / 写 600 各一环，刷新洪流挤不掉写）、`CommandEntry`（argv、读写类、耗时、退出码与失败类别、`Line()` 给可复制的一行并把控制字符写成 `$'…'`）、`Entries(root, withReads)` 新的在前、`Clear(root)`；URL 里的凭据与超长参数在记录时就被遮；`Runner.Commands` 打开记录（`run` / `runStdinEnv` 外包一层），关闭时零痕迹；stdin 与 commit 信息永远不进来；engine 的 `policyRunner` 写同一个日志。
 - `command_log_test.go`：读写都记且新的在前、失败带类别与退出码、读写各自成环、按仓库根过滤与清除、URL 凭据与超长参数被遮、stdin 不进日志、Line 引号与控制字符、nil 日志安全；每条做过变异检查。
-- `sequencer.go`：merge/revert/cherry-pick 状态探测和完成/中止；`RebaseOnto`（冲突即 abort 并回报冲突文件）。
+- `sequencer.go`：merge/revert/cherry-pick 状态探测和完成/中止；`RebaseOnto`（冲突即 abort 并回报冲突文件）；`RebaseOntoFrom`（`git rebase --onto 目标 upstream`：upstream 之后的提交挪到目标分支上，upstream 及之前不再属于当前分支；全长哈希、须在当前分支历史里、其后至少一个提交、含合并提交即拒绝，复用 `rebaseOrAbort` 的冲突即中止；Undo 可退回）。
 - `sequencer_test.go`：sequencer 事务状态测试。
 - `tree.go`：变更文件的目录树、折叠与过滤模型。
 - `tree_at.go`：`ListTree`（`ls-tree -z`，某个 rev 下一层目录的条目：名/路径/模式/目录/子模块/大小，拒绝选项形态与越界路径，条目路径可原样交给 `ReadBlob`，供 Files 的"按提交看整棵树"）+ `FetchedAt`（读 `FETCH_HEAD` 的修改时间，链接 worktree 也成立；只读，从不触发网络）。

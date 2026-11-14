@@ -180,7 +180,56 @@ func (r *Runner) RebaseOnto(ctx context.Context, root, target string) error {
 	if err := r.RequireCleanWorktree(ctx, root); err != nil {
 		return err
 	}
-	_, err = r.Mutate(ctx, root, "rebase", ref)
+	return r.rebaseOrAbort(ctx, root, "rebase", ref)
+}
+
+// RebaseOntoFrom is `git rebase --onto target upstream`: the commits after
+// upstream (a full hash on the current branch, exclusive) are replayed on top
+// of target, and upstream and everything before it stay behind. Merge commits
+// in that run are refused (a plain rebase would flatten them); a conflict
+// aborts as in RebaseOnto.
+func (r *Runner) RebaseOntoFrom(ctx context.Context, root, target, upstream string) error {
+	refuse := func(msg string) error {
+		return &Error{Class: ErrRefusal, OpClass: OpMutate, Op: "rebase", err: errors.New(msg)}
+	}
+	if !validFullCommitID(upstream) {
+		return refuse("a full Git commit hash is required")
+	}
+	ref, err := r.resolveBranchRef(ctx, root, target)
+	if err != nil {
+		return err
+	}
+	current := r.CurrentBranch(ctx, root)
+	if current == "" || current == target {
+		return refuse("select a different branch while on a checked-out branch")
+	}
+	if err := r.RequireCleanWorktree(ctx, root); err != nil {
+		return err
+	}
+	if _, err := r.Read(ctx, root, "merge-base", "--is-ancestor", upstream, "HEAD"); err != nil {
+		return refuse("that commit is not part of the current branch's history")
+	}
+	run, err := r.Read(ctx, root, "rev-list", "--count", upstream+"..HEAD")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(run)) == "0" {
+		return refuse("there are no commits after that one to move")
+	}
+	merges, err := r.Read(ctx, root, "rev-list", "--merges", "-n", "1", upstream+"..HEAD")
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(string(merges))) > 0 {
+		return refuse("the commits to move include a merge commit; a rebase would flatten it")
+	}
+	return r.rebaseOrAbort(ctx, root, "rebase", "--onto", ref, upstream)
+}
+
+// rebaseOrAbort runs one rebase command; one that stops is aborted at once
+// and reported, so nothing is left half-done.
+func (r *Runner) rebaseOrAbort(ctx context.Context, root string, args ...string) error {
+	_, err := r.Mutate(ctx, root, args...)
 	if err == nil {
 		return nil
 	}

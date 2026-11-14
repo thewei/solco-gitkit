@@ -443,3 +443,102 @@ func TestCompareCommitsReadsTwoCommitsAgainstEachOtherNotTheirParents(t *testing
 		}
 	}
 }
+
+func oneLineLog(t *testing.T, root string) string {
+	t.Helper()
+	return strings.Join(strings.Split(strings.TrimSpace(runGit(t, root, "log", "--format=%s")), "\n"), ",")
+}
+
+func TestRebaseOntoFromMovesTheCommitsAfterTheMarkedOne(t *testing.T) {
+	root, r := tempRepo(t)
+	ctx, cancel := opCtx(t)
+	defer cancel()
+	runGit(t, root, "checkout", "-q", "-b", "other")
+	commitFile(t, root, "o.txt", "o\n", "o1")
+	runGit(t, root, "checkout", "-q", "-")
+	runGit(t, root, "checkout", "-q", "-b", "topic")
+	t1 := commitFile(t, root, "t1.txt", "1\n", "t1")
+	commitFile(t, root, "t2.txt", "2\n", "t2")
+	t3 := commitFile(t, root, "t3.txt", "3\n", "t3")
+
+	// Refusals first: nothing may move.
+	head := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+	for name, call := range map[string]func() error{
+		"short hash":     func() error { return r.RebaseOntoFrom(ctx, root, "other", t1[:8]) },
+		"the tip itself": func() error { return r.RebaseOntoFrom(ctx, root, "other", t3) },
+		"not on the branch": func() error {
+			return r.RebaseOntoFrom(ctx, root, "other", strings.TrimSpace(runGit(t, root, "rev-parse", "other")))
+		},
+		"the current branch": func() error { return r.RebaseOntoFrom(ctx, root, "topic", t1) },
+		"an unknown branch":  func() error { return r.RebaseOntoFrom(ctx, root, "nowhere", t1) },
+	} {
+		if err := call(); err == nil {
+			t.Errorf("%s: expected a refusal", name)
+		}
+	}
+	writeRepoFile(t, root, "t1.txt", "dirty\n")
+	if err := r.RebaseOntoFrom(ctx, root, "other", t1); err == nil {
+		t.Error("a dirty work tree is refused")
+	}
+	runGit(t, root, "checkout", "--", "t1.txt")
+	if got := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD")); got != head {
+		t.Fatalf("a refusal moved HEAD: %s -> %s", head, got)
+	}
+
+	if err := r.RebaseOntoFrom(ctx, root, "other", t1); err != nil {
+		t.Fatal(err)
+	}
+	// t1 and what was before it stay on the old line; t2 and t3 now sit on other.
+	if got := oneLineLog(t, root); got != "t3,t2,o1,initial" {
+		t.Fatalf("log = %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "t1.txt")); err == nil {
+		t.Error("t1 is not part of the moved commits")
+	}
+
+	// The UI promises Undo brings the left-out commits back.
+	plan, ok, err := r.PlanReplay(ctx, root, false)
+	if err != nil || !ok || plan.Kind != ReplayRebase {
+		t.Fatalf("undo plan = %+v, %v, %v", plan, ok, err)
+	}
+	if err := r.Replay(ctx, root, false, plan.Identity); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD")); got != t3 {
+		t.Errorf("after Undo HEAD = %s, want the old tip %s", got, t3)
+	}
+}
+
+func TestRebaseOntoFromRefusesAMergeAndAbortsAConflict(t *testing.T) {
+	root, r := tempRepo(t)
+	ctx, cancel := opCtx(t)
+	defer cancel()
+	runGit(t, root, "checkout", "-q", "-b", "other")
+	commitFile(t, root, "clash.txt", "other\n", "o1")
+	runGit(t, root, "checkout", "-q", "-")
+	runGit(t, root, "checkout", "-q", "-b", "topic")
+	t1 := commitFile(t, root, "a.txt", "a\n", "t1")
+	commitFile(t, root, "clash.txt", "topic\n", "t2")
+	head := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+
+	err := r.RebaseOntoFrom(ctx, root, "other", t1)
+	if ge, ok := GitError(err); !ok || ge.Class != ErrConflict || len(ge.Paths) != 1 || ge.Paths[0] != "clash.txt" {
+		t.Fatalf("a conflict is reported with its paths: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD")); got != head {
+		t.Errorf("the aborted rebase left HEAD at %s, want %s", got, head)
+	}
+	if st, _ := r.SequencerState(ctx, root); st.Active() {
+		t.Errorf("nothing may be left half-done: %+v", st)
+	}
+
+	// A merge inside the run is refused before anything starts.
+	runGit(t, root, "checkout", "-q", "-b", "side", t1)
+	side := commitFile(t, root, "side.txt", "s\n", "side")
+	_ = side
+	runGit(t, root, "checkout", "-q", "topic")
+	runGit(t, root, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+	if err := r.RebaseOntoFrom(ctx, root, "other", t1); err == nil || !strings.Contains(err.Error(), "merge") {
+		t.Errorf("a merge commit in the run: %v", err)
+	}
+}
