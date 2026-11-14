@@ -23,6 +23,11 @@ type CommitDraft struct {
 	// SignOff appends a Signed-off-by trailer (-s). Both are per commit.
 	NoVerify bool
 	SignOff  bool
+	// CoAuthors are "Name <email>" people who share the commit: each becomes a
+	// Co-authored-by trailer. ResetAuthor (with Amend only) makes the amended
+	// commit's author the current user and the time now (--reset-author).
+	CoAuthors   []string
+	ResetAuthor bool
 }
 
 // CommitPreflight is the stale-state fence captured at Commit-surface open
@@ -158,6 +163,13 @@ func (r *Runner) Commit(ctx context.Context, root string, draft CommitDraft, pre
 	if strings.TrimSpace(draft.Subject) == "" {
 		return result, errors.New("commit subject is required")
 	}
+	trailers, err := coAuthorTrailers(draft.CoAuthors)
+	if err != nil {
+		return result, err
+	}
+	if draft.ResetAuthor && !draft.Amend {
+		return result, errors.New("reset author applies to an amend only")
+	}
 	if len(draft.Paths) == 0 {
 		return result, errors.New("no files selected for commit")
 	}
@@ -203,12 +215,18 @@ func (r *Runner) Commit(ctx context.Context, root string, draft CommitDraft, pre
 	if draft.SignOff {
 		args = append(args, "--signoff")
 	}
+	if draft.ResetAuthor {
+		args = append(args, "--reset-author")
+	}
 	args = append(args, "--")
 	args = append(args, paths...)
 
 	stdin := draft.Subject + "\n"
 	if body := strings.TrimSpace(draft.Body); body != "" {
 		stdin += "\n" + body + "\n"
+	}
+	if len(trailers) > 0 {
+		stdin += "\n" + strings.Join(trailers, "\n") + "\n"
 	}
 	out, err := r.runStdin(ctx, OpMutate, MutateTimeout, root, stdin, args)
 	if err != nil {
@@ -270,4 +288,26 @@ func parseCommitHash(out string) string {
 		return fields[len(fields)-1]
 	}
 	return ""
+}
+
+// coAuthorTrailers turns "Name <email>" people into Co-authored-by trailers.
+// Anything that is not one line of that shape is refused: a trailer is a line
+// of the commit message, so a stray newline would be message text.
+func coAuthorTrailers(people []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range people {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		open, end := strings.LastIndex(p, "<"), strings.LastIndex(p, ">")
+		if strings.ContainsAny(p, "\r\n") || open <= 0 || end != len(p)-1 || end < open+3 || !strings.Contains(p[open:end], "@") ||
+			strings.TrimSpace(p[:open]) == "" {
+			return nil, fmt.Errorf("co-author %q must look like Name <email>", p)
+		}
+		out = append(out, "Co-authored-by: "+p)
+	}
+	return out, nil
 }

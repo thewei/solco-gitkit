@@ -32,6 +32,9 @@ Git workbench 是 Solco 家族（Solco 与 Solco Git）共用的本地 Git 域�
 - `mutation_matrix_test.go`：Git 操作拒绝/保护矩阵测试。
 - `fork_more.go`：Fork 对齐的大件域能力（ResetTo、DeleteRemoteBranch、Set/UnsetUpstream、FormatPatch/StashPatch/WorkingPatch、CompareToWorktree、FileHistory、Blame、远程增改删、子模块列表/更新、RebasePlan/InteractiveRebase；冲突即 abort，Hard reset 仅干净树）。
 - `ignore.go`：`IgnorePaths`（LazyGit 的 ignore / exclude）：把未跟踪的文件或文件夹以锚定模式（`/path`，文件夹带 `/`，`* ? [ ] \` 与结尾空格转义）追加到仓库 `.gitignore` 或本机 `info/exclude`；已有的行不重复、已跟踪的路径拒绝（不替用户取消跟踪）、文件尾缺换行先补；路径全部校验完才写第一个字节，在 `LockRepo` 下与别的变更互斥。`ignore_test.go`：用 `git check-ignore` 证明写出的规则真被 Git 认、不重复、本机排除不碰工作区、拒绝时什么都没写。
+- `fixup.go`：`CreateFixup`（`git commit --fixup=<提交>`：完整哈希、须是 HEAD 的祖先、无 sequencer、暂存区非空）；`PlanAutosquash`（纯函数：把每个 `fixup! X` 挪到最近的、主题为 X 的较旧提交之后，找不到的原地保留，只认 `fixup!`）；`SquashFixups`（从所点提交的父起 `RebasePlan` → `PlanAutosquash` → `InteractiveRebase`，没有可折的就拒绝）；`fixup_test.go`。
+- `stash_modes.go`：`StashPushMode`（`StashStaged` = `stash push --staged`，无暂存即拒；`StashKeepIndex` = `--keep-index -u`，干净树即拒）；`stash_modes_test.go`。
+- `commit_authors_test.go`：`CommitDraft.CoAuthors`（`Name <email>`，去重，换行或尾随文字即拒，`Co-authored-by` 追加在正文后，用 git 自己的 trailers 解析核对）与 `ResetAuthor`（`--reset-author`，只在 Amend 时有效）。
 - `fork_more.go` 另有 `CompareCommits`（两个提交互相比较，`DiffBase` 为 full..full，与单个提交的审阅同形）。
 - `fork_more2.go`：Fork 第三批域能力（Pull ff/merge/rebase、FetchAll(+prune)、MergeSquash、CheckoutDetached、RestoreFile、ApplyPatch、CreateTagAnnotated、DeleteRemoteTag、RemoveWorktree、UnmergedPaths/ResolveConflict、Reflog、Add/RemoveSubmodule、StashPushPaths/StashClear、ParseWebRepo/CommitURL；冲突型集成动作失败即回滚并带冲突文件，Commit 增 NoVerify/SignOff）。
 - `autostash.go`：WithAutostash（Fork 的 Stash and reapply：stash -u → 动作 → pop；动作失败且不在半路则立即还原，半路/重放冲突则保留 stash）+ LocalChangesBlocked（识别"被本地改动挡住"的 Git 拒绝）
