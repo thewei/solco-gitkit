@@ -6,7 +6,7 @@ require (
 	github.com/jesseduffield/lazygit v0.66.4-0.20261110130621-8290cc9357ad
 	github.com/sirupsen/logrus v1.10.2
 	github.com/stefanhaller/git-todo-parser v0.0.7-0.20250905083220-c50528f08304
-	github.com/thewei/solco-gitkit v0.2.0
+	github.com/thewei/solco-gitkit v0.3.0
 )
 
 require (
